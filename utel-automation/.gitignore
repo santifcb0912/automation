@@ -1,0 +1,37 @@
+# ============================================================
+# .gitignore
+# Archivos que NUNCA deben subirse a git
+# Contienen contraseñas y datos sensibles
+# ============================================================
+
+# Archivo con todas tus contraseñas — NUNCA a git
+.env
+
+# Credenciales de Google — contiene clave privada RSA
+config/google_credentials.json
+
+# Capturas de pantalla temporales
+screenshots/
+
+# Archivos de log
+logs/
+
+# Entorno virtual de Python
+venv/
+env/
+
+# Archivos compilados de Python — se generan automáticamente
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos del sistema Windows
+Thumbs.db
+desktop.ini
+
+# Archivos de IDEs
+.vscode/
+.idea/
+*.suo
+*.user

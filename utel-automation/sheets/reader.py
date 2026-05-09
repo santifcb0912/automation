@@ -202,11 +202,20 @@ class SheetsReader:
                 # También puede tener dos URLs en la misma celda (como la fila 19 de Perú)
                 clean_url = url_col.split()[0] if url_col else ""
 
-                # Normalizamos el tipo de formulario
-                # "Targeta" y "Tarjeta" son el mismo tipo (error tipográfico en el Sheets)
-                form_type = location_col
-                if form_type.lower() in ["targeta", "tarjeta"]:
-                    form_type = "Tarjeta"
+                # Normalizamos el tipo de formulario de la columna E
+                # para que "FormLP", "Form LP", "footer ", "Targeta", etc.
+                # lleguen de forma estable al FormFiller.
+                form_type_raw = location_col.strip()
+                form_type_key = form_type_raw.lower().replace(" ", "").replace("-", "").replace("_", "")
+                form_type_map = {
+                    "footer": "Footer",
+                    "lateral": "Lateral",
+                    "tarjeta": "Tarjeta",
+                    "targeta": "Tarjeta",
+                    "formlp": "FormLP",
+                    "form": "FormLP",
+                }
+                form_type = form_type_map.get(form_type_key, form_type_raw)
 
                 # Creamos el objeto LeadRow con los datos de la fila
                 lead = LeadRow(

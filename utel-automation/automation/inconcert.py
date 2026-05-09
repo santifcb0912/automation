@@ -292,48 +292,11 @@ class InConcertScraper:
             await self.page.reload(wait_until="domcontentloaded")
             await BrowserManager.human_delay(1000, 1500)
 
-            # Buscamos el selector de filtro (dice "Email", "Nombre", etc.)
-            # Este dropdown determina por qué campo buscamos
-            filter_selectors = [
-                "select.search-filter",
-                ".search-type select",
-                "[class*='filter'] select",
-                "select:has-option('Email')",
-                ".busqueda-basica select",
-            ]
+            filter_ok = await self._select_email_filter()
+            if not filter_ok:
+                logger.warning("⚠️  No se pudo confirmar filtro Email; se intentará buscar de todas formas")
 
-            # Seleccionamos "Email" como tipo de filtro
-            for selector in filter_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element:
-                        await self.page.select_option(selector, label="Email")
-                        await BrowserManager.human_delay(300, 600)
-                        logger.debug("✅ Filtro 'Email' seleccionado")
-                        break
-                except Exception:
-                    continue
-
-            # Buscamos el campo de texto de búsqueda
-            search_input_selectors = [
-                "input.search-input",
-                ".busqueda-basica input[type='text']",
-                "input[placeholder*='buscar']",
-                "input[placeholder*='Buscar']",
-                ".search-field input",
-                "[class*='search'] input[type='text']",
-            ]
-
-            search_input = None
-            for selector in search_input_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element and await element.is_visible():
-                        search_input = element
-                        break
-                except Exception:
-                    continue
-
+            search_input = await self._find_search_input()
             if not search_input:
                 logger.warning("⚠️  No se encontró campo de búsqueda")
                 return False
@@ -346,28 +309,13 @@ class InConcertScraper:
 
             await BrowserManager.human_delay(300, 600)
 
-            # Hacemos click en la lupa para ejecutar la búsqueda
-            search_button_selectors = [
-                "button.search-btn",
-                "button[type='submit']",
-                ".btn-buscar",
-                ".search-button",
-                "button:has-text('Buscar')",
-                # Ícono de lupa (SVG o icono)
-                ".icon-search",
-                "[class*='search'] button",
-                ".busqueda-basica button",
-            ]
+            # Enter suele ejecutar la busqueda en este componente.
+            await self.page.keyboard.press("Enter")
+            logger.debug("✅ Enter ejecutado en campo de búsqueda")
+            await BrowserManager.human_delay(1200, 1600)
 
-            for selector in search_button_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element and await element.is_visible():
-                        await element.click()
-                        logger.debug("✅ Click en lupa de búsqueda")
-                        break
-                except Exception:
-                    continue
+            # Fallback: click en lupa/boton asociado al mismo bloque del input.
+            await self._click_search_button_near_input(search_input)
 
             # Esperamos a que carguen los resultados
             await BrowserManager.human_delay(2000, 3000)
@@ -378,6 +326,236 @@ class InConcertScraper:
         except Exception as e:
             logger.error(f"❌ Error en búsqueda: {e}")
             return False
+
+    async def _select_email_filter(self) -> bool:
+        """Selecciona el filtro Email en InConcert, evitando dejar Nombre activo."""
+        # Flujo real del UI: el filtro es un dropdown custom que muestra "Nombre".
+        # Hay que abrirlo y elegir "Email" antes de escribir el lead.
+        try:
+            opened = await self._open_basic_search_filter_dropdown()
+            if opened:
+                email_option = self.page.get_by_text("Email", exact=True)
+                if await email_option.count() > 0:
+                    await email_option.first.click(force=True)
+                    await BrowserManager.human_delay(500, 800)
+                    if await self._basic_filter_shows_email():
+                        logger.debug("✅ Filtro Email seleccionado desde dropdown Nombre")
+                        return True
+        except Exception as e:
+            logger.debug(f"No se pudo seleccionar Email desde dropdown Nombre: {e}")
+
+        try:
+            selected = await self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0
+                            && !el.disabled;
+                    };
+
+                    const selects = Array.from(document.querySelectorAll('select')).filter(visible);
+                    for (const select of selects) {
+                        const options = Array.from(select.options || []);
+                        const emailOption = options.find((option) =>
+                            String(option.textContent || option.value || '').trim().toLowerCase() === 'email'
+                        );
+                        if (!emailOption) continue;
+
+                        select.value = emailOption.value;
+                        select.dispatchEvent(new Event('input', { bubbles: true }));
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                        select.dispatchEvent(new Event('blur', { bubbles: true }));
+                        return true;
+                    }
+                    return false;
+                }
+                """
+            )
+            if selected:
+                logger.debug("✅ Filtro Email seleccionado por select nativo")
+                await BrowserManager.human_delay(500, 800)
+                return True
+        except Exception:
+            pass
+
+        # Fallback para dropdown custom: abrir combobox y elegir texto Email.
+        try:
+            combo_candidates = self.page.locator(
+                "[role='combobox']:visible, [class*='select']:visible, [class*='dropdown']:visible"
+            )
+            count = await combo_candidates.count()
+            for i in range(count):
+                combo = combo_candidates.nth(i)
+                try:
+                    text = (await combo.inner_text(timeout=1000)).lower()
+                    if "nombre" in text or "email" in text or "correo" in text:
+                        await combo.click(force=True)
+                        await BrowserManager.human_delay(300, 500)
+                        option = self.page.get_by_text("Email", exact=True)
+                        if await option.count() > 0:
+                            await option.first.click(force=True)
+                            logger.debug("✅ Filtro Email seleccionado por dropdown custom")
+                            return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return False
+
+    async def _open_basic_search_filter_dropdown(self) -> bool:
+        """Abre el dropdown de Busqueda Basica que por defecto muestra Nombre."""
+        candidates = [
+            self.page.locator(".busqueda-basica button:has-text('Nombre')"),
+            self.page.locator("button:has-text('Nombre')"),
+            self.page.get_by_text("Nombre", exact=True),
+        ]
+
+        for candidate in candidates:
+            count = await candidate.count()
+            for i in range(count):
+                item = candidate.nth(i)
+                try:
+                    if await item.is_visible():
+                        await item.click(force=True)
+                        await BrowserManager.human_delay(300, 500)
+                        if await self.page.get_by_text("Email", exact=True).count() > 0:
+                            logger.debug("✅ Dropdown de filtro basico abierto desde Nombre")
+                            return True
+                except Exception:
+                    continue
+
+        # Fallback por DOM: click al elemento visible cuyo texto sea exactamente Nombre.
+        try:
+            clicked = await self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0
+                            && !el.disabled;
+                    };
+
+                    const items = Array.from(document.querySelectorAll('button, [role=button], span, div'))
+                        .filter((el) => visible(el) && String(el.textContent || '').trim() === 'Nombre');
+
+                    if (items[0]) {
+                        items[0].click();
+                        return true;
+                    }
+                    return false;
+                }
+                """
+            )
+            if clicked:
+                await BrowserManager.human_delay(300, 500)
+                return await self.page.get_by_text("Email", exact=True).count() > 0
+        except Exception:
+            pass
+
+        return False
+
+    async def _basic_filter_shows_email(self) -> bool:
+        """Confirma que el filtro visible de busqueda basica quedo en Email."""
+        try:
+            return await self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0;
+                    };
+
+                    const buttons = Array.from(document.querySelectorAll('button, [role=button]'))
+                        .filter(visible)
+                        .map((el) => String(el.textContent || '').trim());
+
+                    return buttons.some((text) => text === 'Email');
+                }
+                """
+            )
+        except Exception:
+            return False
+
+    async def _find_search_input(self):
+        """Encuentra el input visible donde se escribe el correo a buscar."""
+        search_input_selectors = [
+            "input.search-input",
+            ".busqueda-basica input[type='text']",
+            "input[placeholder*='buscar' i]",
+            ".search-field input",
+            "[class*='search'] input[type='text']",
+            "input[type='text']:visible",
+        ]
+
+        for selector in search_input_selectors:
+            try:
+                elements = await self.page.query_selector_all(selector)
+                for element in elements:
+                    if await element.is_visible():
+                        return element
+            except Exception:
+                continue
+        return None
+
+    async def _click_search_button_near_input(self, search_input) -> None:
+        """Hace click en la lupa asociada al input; si no la encuentra, no falla."""
+        try:
+            clicked = await search_input.evaluate(
+                """
+                (input) => {
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0
+                            && !el.disabled;
+                    };
+
+                    const root = input.closest('form, .busqueda-basica, [class*=search], [class*=Search]')
+                        || input.parentElement
+                        || document;
+
+                    const buttons = Array.from(root.querySelectorAll(
+                        "button, [role='button'], .icon-search, [class*='search']"
+                    )).filter((el) => el !== input && visible(el));
+
+                    const inputBox = input.getBoundingClientRect();
+                    buttons.sort((a, b) => {
+                        const ar = a.getBoundingClientRect();
+                        const br = b.getBoundingClientRect();
+                        const ad = Math.abs(ar.left - inputBox.right) + Math.abs(ar.top - inputBox.top);
+                        const bd = Math.abs(br.left - inputBox.right) + Math.abs(br.top - inputBox.top);
+                        return ad - bd;
+                    });
+
+                    if (buttons[0]) {
+                        buttons[0].click();
+                        return true;
+                    }
+                    return false;
+                }
+                """
+            )
+            if clicked:
+                logger.debug("✅ Click en lupa/botón cercano al campo de búsqueda")
+        except Exception as e:
+            logger.debug(f"No se pudo hacer click en lupa cercana: {e}")
 
     async def _has_results(self) -> bool:
         """

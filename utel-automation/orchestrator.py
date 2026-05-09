@@ -284,9 +284,9 @@ class Orchestrator:
                 self._email_counter += 1
                 counter = self._email_counter
 
-            # Formato: test190326N001@testUtel.com
+            # Formato: test190326N001@testingUtel.com
             date_str = datetime.now().strftime("%d%m%y")  # Ej: 190326
-            lead.test_email = f"test{date_str}N{counter:03d}@testUtel.com"
+            lead.test_email = f"test{date_str}N{counter:03d}@testingUtel.com"
 
             logger.info(
                 f"[{lead_index + 1}/{total_leads}] "
@@ -316,8 +316,18 @@ class Orchestrator:
             form_submitted = await form_filler.fill(lead)
 
             if not form_submitted:
-                logger.warning(f"⚠️  Formulario no enviado para {lead.test_email}")
-                # Continuamos igual — el lead podría haber llegado de todas formas
+                logger.warning(
+                    f"⚠️  Formulario no enviado para {lead.test_email}; "
+                    "no se verificará en InConcert"
+                )
+                await self._handle_error(
+                    lead=lead,
+                    sheet_id=sheet_id,
+                    tab_name=tab_name,
+                    column=column,
+                    reason="formulario no enviado o campos obligatorios incompletos"
+                )
+                return False
 
             # ---- FASE B: Verificar en InConcert ----
             inconcert_page = await browser_manager.new_page()

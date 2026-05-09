@@ -1,345 +1,643 @@
 # ============================================================
 # automation/form_filler.py
-# Llena formularios de UTEL detectando campos dinámicamente
-# El sitio usa React/Next.js — los campos se renderizan en el cliente
-# Por eso usamos espera activa y selectores por texto visible
+# Llena formularios UTEL sin cambiar el frontend del sistema.
+# Estrategia principal tomada del QA previo con Selenium:
+#   1. Ubicar form por ID segun Location: FooterBLC/LateralBLC/TarjetaBLC.
+#   2. Llenar dentro de ese form, nunca en toda la pagina.
+#   3. Respetar dependencias: modality -> area -> program -> contacto.
+#   4. Validar valores antes de enviar.
 # ============================================================
 
-import asyncio
-import random
 from typing import Optional
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
-from loguru import logger
 
-from config.models import LeadRow
+from loguru import logger
+from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeoutError
+
 from config.countries import Country, get_level_name, infer_level_from_url
+from config.models import LeadRow
+
+
+FORM_IDS = {
+    "footer": "FooterBLC",
+    "lateral": "LateralBLC",
+    "tarjeta": "TarjetaBLC",
+    "targeta": "TarjetaBLC",
+}
+
+PROGRAM_SEARCH_BY_LEVEL = {
+    "licenciatura": "Administracion",
+    "licenciaturas": "Administracion",
+    "licenciaturas hibridas": "Administracion",
+    "maestria": "Administracion",
+    "maestria ejecutiva": "Administracion",
+    "maestría": "Administracion",
+    "doctorado": "Gestion",
+    "diplomado": "Project",
+    "diplomados": "Project",
+    "bachillerato": "Bachillerato",
+}
 
 
 class FormFiller:
-    """
-    Llena el formulario de una landing page de UTEL.
-    Usa estrategia de detección dinámica porque el sitio es React/Next.js
-    — los campos aparecen después de que la página termina de renderizar.
-    """
+    """Llena y envia formularios de LPs UTEL usando Playwright."""
 
     def __init__(self, page: Page, country: Country):
         self.page = page
         self.country = country
-        logger.debug(f"📝 FormFiller creado para {country.id}")
+        self.form_scope: Optional[Locator] = None
+        self.form_type: str = ""
+        logger.debug(f"FormFiller creado para {country.id}")
 
     async def fill(self, lead: LeadRow) -> bool:
-        """Método principal — abre la LP, detecta el tipo de form y lo llena."""
+        """Abre la LP, prepara el formulario correcto y lo envia."""
         try:
-            logger.info(f"🌐 Abriendo LP: {lead.landing_url}")
-
-            # Navegamos y esperamos que React termine de renderizar
-            await self.page.goto(lead.landing_url, wait_until="networkidle", timeout=45000)
-            await self.page.wait_for_timeout(3000)
-
-            form_type = lead.form_type.strip().lower()
-            logger.info(f"📋 Tipo: {form_type}")
-
-            if form_type == "lateral":
-                await self._handle_lateral()
-            elif form_type == "footer":
-                await self._handle_footer()
-            elif form_type in ["tarjeta", "targeta"]:
-                await self._handle_tarjeta(lead)
-            else:
-                logger.info("📋 Form LP — formulario directo")
-
-            # Nivel correcto según país
+            self.form_type = self._normalize_form_type(lead.form_type)
             level = get_level_name(self.country, lead.nivel or "")
             if not level:
                 level = infer_level_from_url(lead.landing_url) or ""
-            logger.info(f"🎓 Nivel: '{level}'")
 
-            return await self._fill_all_fields(lead.test_email, level)
+            logger.info(f"Abriendo LP: {lead.landing_url}")
+            logger.info(f"Formulario: {self.form_type or 'formlp'} | nivel='{level}'")
+
+            await self.page.goto(
+                lead.landing_url,
+                wait_until="domcontentloaded",
+                timeout=45000,
+            )
+            await self._soft_wait_network()
+            await self.page.wait_for_timeout(3000)
+
+            if self.form_type == "lateral":
+                await self._prepare_lateral_flow(level)
+            elif self.form_type == "footer":
+                await self._prepare_footer_flow()
+            elif self.form_type in ["tarjeta", "targeta"]:
+                await self._prepare_tarjeta_flow(lead)
+            else:
+                logger.info("Form LP: se buscara formulario visible")
+
+            self.form_scope = await self._find_form_scope(self.form_type)
+            if not self.form_scope:
+                logger.warning("No se encontro formulario usable")
+                return False
+
+            await self._log_fields("antes de llenar")
+            filled = await self._fill_form(test_email=lead.test_email, level=level)
+            await self._log_fields("despues de llenar")
+            if not filled:
+                return False
+
+            submitted = await self._submit_form()
+            if not submitted:
+                return False
+
+            await self.page.wait_for_timeout(4000)
+            logger.info("Formulario enviado; se permite continuar a InConcert")
+            return True
 
         except PlaywrightTimeoutError:
-            logger.error(f"❌ Timeout: {lead.landing_url}")
+            logger.error(f"Timeout llenando formulario: {lead.landing_url}")
             return False
         except Exception as e:
-            logger.error(f"❌ Error en fill(): {e}")
+            logger.error(f"Error en FormFiller.fill(): {e}")
             return False
 
-    async def _handle_lateral(self) -> None:
-        """Tipo Lateral: click en botón 'Solicitar información' para desplegar form."""
-        logger.info("🔲 Buscando botón lateral...")
+    def _normalize_form_type(self, form_type: str) -> str:
+        raw = (form_type or "").strip().lower().replace(" ", "")
+        if raw in ["formlp", "form"]:
+            return "formlp"
+        if raw in ["targeta", "tarjeta"]:
+            return raw
+        return raw
+
+    async def _soft_wait_network(self) -> None:
         try:
-            for name in ["Solicitar información", "Solicitar info", "Contáctanos", "Más información"]:
-                btn = self.page.get_by_role("button", name=name)
-                if await btn.count() == 0:
-                    btn = self.page.get_by_role("link", name=name)
-                if await btn.count() > 0:
-                    await btn.first.click()
-                    logger.info(f"✅ Botón lateral '{name}' clickeado")
-                    await self.page.wait_for_timeout(2000)
-                    return
-            logger.warning("⚠️ Botón lateral no encontrado")
-        except Exception as e:
-            logger.warning(f"⚠️ Error lateral: {e}")
-
-    async def _handle_footer(self) -> None:
-        """Tipo Footer: scroll hasta el formulario al pie de la página."""
-        logger.info("⬇️ Scroll hacia footer...")
-        for _ in range(8):
-            await self.page.evaluate("window.scrollBy(0, 400)")
-            await self.page.wait_for_timeout(400)
-        await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await self.page.wait_for_timeout(2000)
-        logger.info("✅ Footer alcanzado")
-
-    async def _handle_tarjeta(self, lead: LeadRow) -> None:
-        """Tipo Tarjeta: URL específica → form visible. URL genérica → usar lupa."""
-        url = lead.landing_url.lower()
-        specific = [
-            "diplomado-en-", "maestria-en-", "maestría-en-", "licenciatura-en-",
-            "doctorado-en-", "ingenieria-en-", "ingeniería-en-", "criminologia",
-            "ciberseguridad", "administracion", "derecho", "psicologia",
-            "project-management", "gestion", "gestión", "contaduria",
-        ]
-        if any(s in url for s in specific):
-            logger.info("✅ Tarjeta A: URL específica")
-        else:
-            logger.info("🔍 Tarjeta B: URL genérica — usando lupa")
-            await self._search_with_magnifier(lead)
-
-    async def _search_with_magnifier(self, lead: LeadRow) -> None:
-        """Busca programa con la lupa y selecciona el primer resultado."""
-        level = get_level_name(self.country, lead.nivel or "Licenciatura")
-        words = {
-            "Maestría": "maestria", "Magister": "magister",
-            "Licenciatura": "licenciatura", "Carrera": "carrera",
-            "Doctorado": "doctorado", "Bachelor": "bachelor",
-            "Bootcamp": "bootcamp", "Diplomado": "diplomado",
-        }
-        word = words.get(level, level.lower() if level else "licenciatura")
-        try:
-            # Click en lupa
-            for name in ["Buscar", "Search", "buscar"]:
-                btn = self.page.get_by_role("button", name=name)
-                if await btn.count() > 0:
-                    await btn.first.click()
-                    await self.page.wait_for_timeout(1000)
-                    break
-
-            # Input de búsqueda
-            inp = self.page.get_by_placeholder("Buscar programa")
-            if await inp.count() == 0:
-                inp = self.page.get_by_role("searchbox")
-            if await inp.count() == 0:
-                inp = self.page.locator("input[type='search']:visible, input[type='text']:visible").first
-
-            await inp.click()
-            await inp.type(word, delay=100)
-            await self.page.wait_for_timeout(2000)
-
-            # Primer resultado
-            results = self.page.locator("ul li a, [class*='result'] a, [class*='suggestion'] a")
-            if await results.count() > 0:
-                idx = random.randint(0, min(await results.count() - 1, 2))
-                text = await results.nth(idx).inner_text()
-                logger.info(f"✅ Seleccionado: '{text.strip()}'")
-                await results.nth(idx).click()
-                await self.page.wait_for_load_state("networkidle")
-                await self.page.wait_for_timeout(2000)
-        except Exception as e:
-            logger.warning(f"⚠️ Error lupa: {e}")
-
-    async def _fill_all_fields(self, test_email: str, level: str) -> bool:
-        """Detecta y llena todos los campos del formulario visible."""
-        logger.info(f"✍️ Llenando campos | nivel='{level}' | email='{test_email}'")
-
-        # Esperamos inputs visibles
-        try:
-            await self.page.wait_for_selector("input:visible, select:visible", timeout=15000)
+            await self.page.wait_for_load_state("networkidle", timeout=25000)
         except Exception:
-            logger.warning("⚠️ No se detectaron inputs en 15s")
+            logger.debug("networkidle no completo; continuo con DOM cargado")
 
-        await self._try_select_level(level)
-        await self.page.wait_for_timeout(800)
-        await self._try_select_program()
-        await self.page.wait_for_timeout(800)
-        await self._try_fill_name()
-        await self.page.wait_for_timeout(500)
-        await self._try_fill_email(test_email)
-        await self.page.wait_for_timeout(500)
-        await self._try_fill_phone()
-        await self.page.wait_for_timeout(500)
-        await self._try_select_province()
-        await self._try_fill_birthdate()
-        await self._try_check_privacy()
-        await self.page.wait_for_timeout(500)
-        return await self._try_submit()
-
-    async def _try_select_level(self, level: str) -> None:
-        """Selecciona el nivel en el primer select del formulario."""
-        if not level:
+    async def _prepare_footer_flow(self) -> None:
+        logger.info("Preparando flujo Footer")
+        if await self._scroll_to_form_id("FooterBLC"):
             return
-        try:
-            selects = self.page.locator("select:visible")
-            count = await selects.count()
-            logger.debug(f"🔎 Selects visibles: {count}")
+        await self._scroll_until_contact_form()
 
-            for i in range(count):
-                sel = selects.nth(i)
-                options = await sel.locator("option").all_inner_texts()
-                logger.debug(f"   Select {i} opciones: {options[:8]}")
-                for opt in options:
-                    if level.lower() in opt.lower() or opt.lower() in level.lower():
-                        await sel.select_option(label=opt)
-                        logger.info(f"✅ Nivel '{opt}' en select {i}")
-                        await self.page.wait_for_timeout(800)
-                        return
-        except Exception as e:
-            logger.debug(f"ℹ️ select nivel: {e}")
+    async def _prepare_lateral_flow(self, level: str) -> None:
+        logger.info("Preparando flujo Lateral")
 
-    async def _try_select_program(self) -> None:
-        """Selecciona cualquier programa en el segundo select."""
-        try:
-            selects = self.page.locator("select:visible")
-            count = await selects.count()
+        if await self._scroll_to_form_id("LateralBLC"):
+            return
+
+        opened = await self._open_hamburger_menu()
+        if opened:
+            await self._click_menu_option(["En linea", "En línea", "Online"])
+            await self.page.wait_for_timeout(1000)
+            await self._click_menu_option([level, "Licenciaturas", "Licenciatura"])
+            await self._soft_wait_network()
+            await self.page.wait_for_timeout(2500)
+
+        if await self._scroll_to_form_id("LateralBLC"):
+            return
+
+        if await self._scroll_to_form_id("FooterBLC"):
+            return
+
+        await self._scroll_until_contact_form()
+
+    async def _prepare_tarjeta_flow(self, lead: LeadRow) -> None:
+        logger.info("Preparando flujo Tarjeta")
+        if await self._scroll_to_form_id("TarjetaBLC"):
+            return
+        await self._search_program_from_generic_page(lead)
+        await self._scroll_to_form_id("TarjetaBLC")
+
+    async def _open_hamburger_menu(self) -> bool:
+        selectors = [
+            "button[aria-label*='menu' i]",
+            "button[aria-label*='menú' i]",
+            "[role='button'][aria-label*='menu' i]",
+            ".hamburger",
+            "[class*='hamburger']",
+            "button:has(svg)",
+        ]
+
+        for selector in selectors:
+            items = self.page.locator(selector)
+            count = await items.count()
             for i in range(count):
-                sel = selects.nth(i)
-                options = await sel.locator("option").all_inner_texts()
-                real = [o for o in options if o.strip() and o.strip() not in ["-", "--", "Seleccionar", "Selecciona"]]
-                if len(real) > 1:
-                    chosen = random.choice(real[:5])
-                    try:
-                        await sel.select_option(label=chosen)
-                        logger.info(f"✅ Programa '{chosen}'")
-                        await self.page.wait_for_timeout(800)
-                        return
-                    except Exception:
+                item = items.nth(i)
+                try:
+                    box = await item.bounding_box()
+                    if not box:
                         continue
-        except Exception as e:
-            logger.debug(f"ℹ️ select programa: {e}")
+                    if box["y"] < 180 or box["x"] > 850:
+                        await item.click(force=True, timeout=3000)
+                        await self.page.wait_for_timeout(1200)
+                        if await self._menu_is_open():
+                            logger.info("Menu hamburguesa abierto")
+                            return True
+                except Exception:
+                    continue
 
-    async def _try_fill_name(self) -> None:
-        """Llena el campo de nombre."""
-        for ph in ["Nombre", "nombre", "Name", "Tu nombre", "Nombres"]:
-            inp = self.page.get_by_placeholder(ph)
-            if await inp.count() > 0:
-                await inp.first.click()
-                await inp.first.clear()
-                await inp.first.type(self.country.fake_name, delay=80)
-                logger.info(f"✅ Nombre: '{self.country.fake_name}'")
-                return
-        logger.debug("ℹ️ Campo nombre no encontrado")
-
-    async def _try_fill_email(self, test_email: str) -> None:
-        """Llena el campo de correo electrónico."""
-        for ph in ["Correo electrónico", "correo electrónico", "Correo", "Email", "email", "tu@correo.com"]:
-            inp = self.page.get_by_placeholder(ph)
-            if await inp.count() > 0:
-                await inp.first.click()
-                await inp.first.clear()
-                await inp.first.type(test_email, delay=80)
-                logger.info(f"✅ Correo: '{test_email}'")
-                return
-        # Por type email
-        inp = self.page.locator("input[type='email']:visible")
-        if await inp.count() > 0:
-            await inp.first.click()
-            await inp.first.clear()
-            await inp.first.type(test_email, delay=80)
-            logger.info(f"✅ Correo (type=email): '{test_email}'")
-            return
-        logger.debug("ℹ️ Campo correo no encontrado")
-
-    async def _try_fill_phone(self) -> None:
-        """Llena el campo de teléfono."""
-        for ph in ["Teléfono", "teléfono", "Phone", "Celular", "celular", "Móvil", "móvil"]:
-            inp = self.page.get_by_placeholder(ph)
-            if await inp.count() > 0:
-                await inp.first.click()
-                await inp.first.clear()
-                await inp.first.type(self.country.fake_phone, delay=80)
-                logger.info(f"✅ Teléfono: '{self.country.fake_phone}'")
-                return
-        inp = self.page.locator("input[type='tel']:visible")
-        if await inp.count() > 0:
-            await inp.first.click()
-            await inp.first.clear()
-            await inp.first.type(self.country.fake_phone, delay=80)
-            logger.info(f"✅ Teléfono (type=tel): '{self.country.fake_phone}'")
-            return
-        logger.debug("ℹ️ Campo teléfono no encontrado")
-
-    async def _try_select_province(self) -> None:
-        """Selecciona la provincia si existe."""
-        if not self.country.fake_province:
-            return
         try:
-            for ph in ["Selecciona una provincia", "Provincia", "Estado", "Region", "Región"]:
-                sel = self.page.get_by_role("combobox", name=ph)
-                if await sel.count() == 0:
-                    sel = self.page.get_by_placeholder(ph)
-                if await sel.count() > 0:
-                    options = await sel.locator("option").all_inner_texts()
-                    real = [o for o in options if o.strip() and o.strip() not in ["-", "--"]]
-                    if real:
-                        await sel.select_option(label=real[0])
-                        logger.info(f"✅ Provincia: '{real[0]}'")
-                        return
-        except Exception as e:
-            logger.debug(f"ℹ️ provincia: {e}")
+            viewport = self.page.viewport_size or {"width": 1366, "height": 768}
+            await self.page.mouse.click(viewport["width"] - 95, 100)
+            await self.page.wait_for_timeout(1200)
+            return await self._menu_is_open()
+        except Exception:
+            return False
 
-    async def _try_fill_birthdate(self) -> None:
-        """Llena fecha de nacimiento si existe."""
+    async def _menu_is_open(self) -> bool:
         try:
-            inp = self.page.locator("input[type='date']:visible")
-            if await inp.count() > 0:
-                await inp.first.fill("1990-01-01")
-                logger.info("✅ Fecha nacimiento: 01/01/1990")
-                return
-            for ph in ["Fecha de nacimiento", "fecha", "Nacimiento"]:
-                inp = self.page.get_by_placeholder(ph)
-                if await inp.count() > 0:
-                    await inp.first.type("01/01/1990", delay=80)
-                    logger.info("✅ Fecha nacimiento por placeholder")
-                    return
-        except Exception as e:
-            logger.debug(f"ℹ️ birthdate: {e}")
+            return await self.page.locator("text='Buscar programa', text='Modalidad'").count() > 0
+        except Exception:
+            return False
 
-    async def _try_check_privacy(self) -> None:
-        """Marca el checkbox de política de privacidad."""
-        try:
-            checkboxes = self.page.locator("input[type='checkbox']:visible")
-            count = await checkboxes.count()
+    async def _click_menu_option(self, labels: list[str]) -> bool:
+        for label in labels:
+            loc = self.page.get_by_text(label, exact=False)
+            count = await loc.count()
             for i in range(count):
-                cb = checkboxes.nth(i)
-                if not await cb.is_checked():
-                    await cb.click()
-                    logger.info(f"✅ Checkbox privacidad marcado")
-                    return
-        except Exception as e:
-            logger.debug(f"ℹ️ checkbox: {e}")
+                item = loc.nth(i)
+                try:
+                    if await item.is_visible():
+                        await item.scroll_into_view_if_needed()
+                        await item.click(force=True, timeout=5000)
+                        logger.info(f"Menu lateral: click en '{label}'")
+                        return True
+                except Exception:
+                    continue
+        return False
 
-    async def _try_submit(self) -> bool:
-        """Click en botón de envío."""
-        logger.info("📤 Enviando formulario...")
+    async def _search_program_from_generic_page(self, lead: LeadRow) -> None:
+        level = get_level_name(self.country, lead.nivel or "Licenciatura")
+        query = self._program_query(level)
+        searchers = [
+            self.page.get_by_placeholder("Buscar programa"),
+            self.page.get_by_role("searchbox"),
+            self.page.locator("input[type='search']:visible"),
+        ]
+
+        for field in searchers:
+            try:
+                if await field.count() == 0:
+                    continue
+                await field.first.click(force=True, timeout=3000)
+                await field.first.fill(query, force=True, timeout=3000)
+                await self.page.wait_for_timeout(1500)
+                await self.page.keyboard.press("ArrowDown")
+                await self.page.keyboard.press("Enter")
+                await self._soft_wait_network()
+                await self.page.wait_for_timeout(2000)
+                logger.info(f"Busqueda de tarjeta usada: '{query}'")
+                return
+            except Exception:
+                continue
+
+    async def _scroll_to_form_id(self, form_id: str) -> bool:
+        locator = self.page.locator(f"#{form_id}")
         try:
-            for text in ["Calcula tu beca", "Enviar información", "Solicitar información",
-                         "Enviar", "Registrarme", "Continuar", "Más información", "Enviar"]:
-                btn = self.page.get_by_role("button", name=text)
-                if await btn.count() > 0:
-                    await self.page.wait_for_timeout(500)
-                    await btn.first.click()
-                    await self.page.wait_for_timeout(3000)
-                    logger.info(f"✅ Submit con botón: '{text}'")
-                    return True
-
-            sub = self.page.locator("button[type='submit']:visible")
-            if await sub.count() > 0:
-                await sub.first.click()
-                await self.page.wait_for_timeout(3000)
-                logger.info("✅ Submit por type=submit")
+            if await locator.count() == 0:
+                return False
+            await locator.first.scroll_into_view_if_needed(timeout=8000)
+            await self.page.wait_for_timeout(1200)
+            if await locator.first.is_visible():
+                logger.info(f"Formulario por ID detectado: #{form_id}")
                 return True
-
-            logger.warning("⚠️ Botón submit no encontrado")
-            return False
         except Exception as e:
-            logger.error(f"❌ Submit error: {e}")
+            logger.debug(f"No se pudo enfocar #{form_id}: {e}")
+        return False
+
+    async def _scroll_until_contact_form(self, max_scrolls: int = 14) -> None:
+        logger.info("Buscando formulario por scroll progresivo")
+        for _ in range(max_scrolls):
+            if await self._visible_contact_form_exists():
+                logger.info("Formulario de contacto visible encontrado")
+                return
+            await self.page.evaluate("window.scrollBy(0, Math.round(window.innerHeight * 0.75))")
+            await self.page.wait_for_timeout(600)
+        await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await self.page.wait_for_timeout(1500)
+
+    async def _visible_contact_form_exists(self) -> bool:
+        return await self.page.evaluate(
+            """
+            () => {
+                const visible = (el) => {
+                    const s = window.getComputedStyle(el);
+                    const r = el.getBoundingClientRect();
+                    return s.display !== 'none' && s.visibility !== 'hidden'
+                        && r.width > 0 && r.height > 0 && !el.disabled
+                        && el.type !== 'hidden';
+                };
+                const fields = Array.from(document.querySelectorAll('input, select, textarea'))
+                    .filter(visible)
+                    .map(el => `${el.name || ''} ${el.id || ''} ${el.placeholder || ''}`.toLowerCase());
+                return fields.some(x => x.includes('email') || x.includes('correo'))
+                    && fields.some(x => x.includes('phone') || x.includes('tel'))
+                    && fields.some(x => x.includes('name') || x.includes('nombre'));
+            }
+            """
+        )
+
+    async def _find_form_scope(self, form_type: str) -> Optional[Locator]:
+        preferred_ids = []
+        mapped = FORM_IDS.get(form_type)
+        if mapped:
+            preferred_ids.append(mapped)
+        preferred_ids.extend(["FooterBLC", "LateralBLC", "TarjetaBLC"])
+
+        for form_id in dict.fromkeys(preferred_ids):
+            form = self.page.locator(f"#{form_id}")
+            try:
+                if await form.count() > 0 and await form.first.is_visible():
+                    logger.info(f"Usando formulario #{form_id}")
+                    return form.first
+            except Exception:
+                continue
+
+        forms = self.page.locator("form:visible")
+        count = await forms.count()
+        best = None
+        best_score = -1
+        for i in range(count):
+            form = forms.nth(i)
+            score = await self._score_form(form)
+            if score > best_score:
+                best = form
+                best_score = score
+
+        if best and best_score > 0:
+            logger.info(f"Usando formulario visible por score={best_score}")
+            return best
+
+        body = self.page.locator("body")
+        logger.warning("Fallback a body como scope de formulario")
+        return body
+
+    async def _score_form(self, form: Locator) -> int:
+        try:
+            return await form.evaluate(
+                """
+                (root) => {
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none' && s.visibility !== 'hidden'
+                            && r.width > 0 && r.height > 0 && !el.disabled
+                            && el.type !== 'hidden';
+                    };
+                    let score = 0;
+                    for (const el of Array.from(root.querySelectorAll('input, select, textarea'))) {
+                        if (!visible(el)) continue;
+                        const key = `${el.name || ''} ${el.id || ''} ${el.placeholder || ''}`.toLowerCase();
+                        if (key.includes('email') || key.includes('correo')) score += 4;
+                        if (key.includes('phone') || key.includes('tel')) score += 4;
+                        if (key.includes('name') || key.includes('nombre')) score += 3;
+                        if (key.includes('modality') || key.includes('area') || key.includes('program')) score += 2;
+                    }
+                    return score;
+                }
+                """
+            )
+        except Exception:
+            return 0
+
+    async def _fill_form(self, test_email: str, level: str) -> bool:
+        logger.info("Llenando formulario en orden dependiente")
+
+        await self._select_field("modality", preferred=[level, "En linea", "En línea", "Online"])
+        await self.page.wait_for_timeout(4000)
+
+        await self._select_field("area", preferred=[level])
+        await self.page.wait_for_timeout(4000)
+
+        await self._fill_program(level)
+        await self.page.wait_for_timeout(1200)
+
+        await self._set_input(["#first_name", "input[name='first_name']", "input[name='name']"], self.country.fake_name, "nombre")
+        await self._set_input(["#email", "input[name='email']", "input[type='email']"], test_email, "email")
+        await self._set_input(["#phone", "input[name='phone']", "input[type='tel']"], self.country.fake_phone, "telefono")
+        await self._check_privacy()
+
+        state = await self._form_state()
+        logger.info(f"Estado final antes de submit: {state}")
+
+        missing = [
+            key for key in ["first_name", "email", "phone"]
+            if not state.get(key)
+        ]
+        if missing:
+            logger.warning(f"Faltan campos de contacto: {missing}")
             return False
+
+        if state.get("has_checkbox") and not state.get("checkbox_checked"):
+            logger.warning("Checkbox de privacidad no quedo marcado")
+            return False
+
+        return True
+
+    async def _select_field(self, field_name: str, preferred: list[str]) -> bool:
+        select = self._scope().locator(f"select[name='{field_name}'], select#{field_name}, select[id*='{field_name}' i]")
+        if await select.count() == 0:
+            logger.info(f"Select {field_name} no existe en este formulario")
+            return False
+
+        locator = select.first
+        await self._wait_select_real_options(locator, field_name)
+        chosen = await locator.evaluate(
+            """
+            (select, preferred) => {
+                const bad = new Set(['', '-', '--', 'seleccionar', 'selecciona', 'select', 'choose']);
+                const clean = (s) => String(s || '').trim();
+                const norm = (s) => clean(s).toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
+                const options = Array.from(select.options || [])
+                    .map((option, index) => ({
+                        index,
+                        text: clean(option.textContent),
+                        value: clean(option.value),
+                        disabled: option.disabled
+                    }))
+                    .filter((option) => {
+                        const t = norm(option.text);
+                        const v = norm(option.value);
+                        return !option.disabled && !bad.has(t) && !bad.has(v)
+                            && !t.endsWith(':') && option.index > 0;
+                    });
+
+                if (!options.length) return null;
+
+                let chosen = null;
+                for (const wantedRaw of preferred || []) {
+                    const wanted = norm(wantedRaw);
+                    if (!wanted) continue;
+                    chosen = options.find((option) => {
+                        const text = norm(option.text);
+                        const value = norm(option.value);
+                        return text.includes(wanted) || value.includes(wanted) || wanted.includes(text);
+                    });
+                    if (chosen) break;
+                }
+                chosen = chosen || options[0];
+                select.selectedIndex = chosen.index;
+                select.value = chosen.value;
+                select.dispatchEvent(new Event('input', { bubbles: true }));
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+                select.dispatchEvent(new Event('blur', { bubbles: true }));
+                return chosen;
+            }
+            """,
+            preferred,
+        )
+
+        if chosen:
+            logger.info(f"Select {field_name}: {chosen}")
+            return True
+
+        logger.warning(f"Select {field_name} sin opciones reales")
+        return False
+
+    async def _wait_select_real_options(self, select: Locator, field_name: str, timeout_ms: int = 10000) -> None:
+        try:
+            await self.page.wait_for_function(
+                """
+                ([select, fieldName]) => {
+                    const bad = new Set(['', '-', '--', 'seleccionar', 'selecciona', 'select', 'choose']);
+                    const norm = (s) => String(s || '').trim().toLowerCase();
+                    const real = Array.from(select.options || []).filter((option, index) => {
+                        const text = norm(option.textContent);
+                        const value = norm(option.value);
+                        return index > 0 && !option.disabled && !bad.has(text)
+                            && !bad.has(value) && !text.endsWith(':');
+                    });
+                    return fieldName !== 'area' || real.length > 0;
+                }
+                """,
+                [await select.element_handle(), field_name],
+                timeout=timeout_ms,
+            )
+        except Exception:
+            logger.debug(f"Select {field_name}: no se confirmaron opciones dinamicas en espera")
+
+    async def _fill_program(self, level: str) -> bool:
+        select_done = await self._select_field("program", preferred=[level, self._program_query(level)])
+        if select_done:
+            return True
+
+        field = self._scope().locator("#program, input[name='program'], input[placeholder*='programa' i], input[placeholder*='interes' i], input[placeholder*='interés' i]")
+        if await field.count() == 0:
+            logger.info("Campo program no existe en este formulario")
+            return False
+
+        query = self._program_query(level)
+        input_field = field.first
+        try:
+            await input_field.scroll_into_view_if_needed(timeout=5000)
+            await input_field.click(force=True, timeout=5000)
+            await input_field.fill(query, force=True, timeout=5000)
+            await input_field.press("ArrowDown")
+            await input_field.press("Enter")
+            await self.page.wait_for_timeout(1500)
+            logger.info(f"Programa escrito/seleccionado con query '{query}'")
+            return True
+        except Exception as e:
+            logger.warning(f"No se pudo llenar program con accion directa: {e}")
+            await self._set_value_dom(input_field, query, "program")
+            return True
+
+    def _program_query(self, level: str) -> str:
+        key = (level or "").strip().lower()
+        return PROGRAM_SEARCH_BY_LEVEL.get(key, "Administracion")
+
+    async def _set_input(self, selectors: list[str], value: str, label: str) -> bool:
+        field = await self._first_existing(selectors)
+        if not field:
+            logger.warning(f"Campo {label} no encontrado")
+            return False
+
+        try:
+            await field.scroll_into_view_if_needed(timeout=5000)
+            await field.fill(value, force=True, timeout=5000)
+            current = await field.input_value(timeout=3000)
+            if current.strip():
+                logger.info(f"Campo {label} completado")
+                return True
+        except Exception as e:
+            logger.debug(f"fill directo fallo para {label}: {e}")
+
+        return await self._set_value_dom(field, value, label)
+
+    async def _set_value_dom(self, field: Locator, value: str, label: str) -> bool:
+        try:
+            await field.evaluate(
+                """
+                (el, value) => {
+                    const proto = el.tagName === 'TEXTAREA'
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+                    if (descriptor && descriptor.set) descriptor.set.call(el, value);
+                    else el.value = value;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('blur', { bubbles: true }));
+                }
+                """,
+                value,
+            )
+            logger.info(f"Campo {label} completado por DOM")
+            return True
+        except Exception as e:
+            logger.warning(f"No se pudo completar {label}: {e}")
+            return False
+
+    async def _check_privacy(self) -> bool:
+        candidates = [
+            self._scope().locator("input[type='checkbox']"),
+            self._scope().locator(".chakra-checkbox__control"),
+            self._scope().locator("[class*='checkbox']"),
+        ]
+
+        for candidate in candidates:
+            count = await candidate.count()
+            for i in range(count):
+                item = candidate.nth(i)
+                try:
+                    await item.scroll_into_view_if_needed(timeout=3000)
+                    await item.click(force=True, timeout=3000)
+                    logger.info("Checkbox privacidad marcado")
+                    return True
+                except Exception:
+                    continue
+
+        logger.warning("Checkbox privacidad no encontrado")
+        return False
+
+    async def _submit_form(self) -> bool:
+        buttons = [
+            "button[type='submit']",
+            "input[type='submit']",
+            "button:has-text('Calcula tu beca')",
+            "button:has-text('Enviar información')",
+            "button:has-text('Enviar informacion')",
+            "button:has-text('Solicitar información')",
+            "button:has-text('Solicitar informacion')",
+            "button:has-text('Enviar')",
+        ]
+
+        for selector in buttons:
+            button = self._scope().locator(selector)
+            if await button.count() == 0:
+                continue
+            try:
+                await button.first.scroll_into_view_if_needed(timeout=5000)
+                await button.first.click(force=True, timeout=5000)
+                logger.info(f"Submit ejecutado con selector {selector}")
+                return True
+            except Exception as e:
+                logger.debug(f"Submit fallo con {selector}: {e}")
+
+        logger.warning("No se encontro boton de submit")
+        return False
+
+    async def _form_state(self) -> dict:
+        try:
+            return await self._scope().evaluate(
+                """
+                (root) => {
+                    const pick = (selector) => root.querySelector(selector)?.value?.trim() || '';
+                    const checkbox = root.querySelector("input[type='checkbox']");
+                    return {
+                        modality: pick("select[name='modality'], select#modality"),
+                        area: pick("select[name='area'], select#area"),
+                        program: pick("select[name='program'], select#program, input[name='program'], input#program"),
+                        first_name: pick("input#first_name, input[name='first_name'], input[name='name']"),
+                        email: pick("input#email, input[name='email'], input[type='email']"),
+                        phone: pick("input#phone, input[name='phone'], input[type='tel']"),
+                        has_checkbox: Boolean(checkbox),
+                        checkbox_checked: checkbox ? checkbox.checked : true
+                    };
+                }
+                """
+            )
+        except Exception as e:
+            logger.debug(f"No se pudo leer estado del formulario: {e}")
+            return {}
+
+    async def _log_fields(self, moment: str) -> None:
+        try:
+            fields = await self._scope().evaluate(
+                """
+                (root) => Array.from(root.querySelectorAll('input, select, textarea')).map((el) => ({
+                    tag: el.tagName,
+                    type: el.type || '',
+                    name: el.name || '',
+                    id: el.id || '',
+                    placeholder: el.placeholder || '',
+                    value: el.type === 'password' ? '***' : (el.value || ''),
+                    options: el.tagName === 'SELECT'
+                        ? Array.from(el.options || []).map(o => ({
+                            text: (o.textContent || '').trim(),
+                            value: o.value || ''
+                        })).slice(0, 10)
+                        : []
+                }))
+                """
+            )
+            logger.info(f"Campos del formulario {moment}: {fields}")
+        except Exception as e:
+            logger.debug(f"No se pudieron listar campos {moment}: {e}")
+
+    def _scope(self) -> Locator:
+        return self.form_scope or self.page.locator("body")
+
+    async def _first_existing(self, selectors: list[str]) -> Optional[Locator]:
+        scope = self._scope()
+        for selector in selectors:
+            locator = scope.locator(selector)
+            try:
+                if await locator.count() > 0:
+                    return locator.first
+            except Exception:
+                continue
+        return None

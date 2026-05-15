@@ -364,11 +364,11 @@ class Orchestrator:
             # Abrimos el panel de gestión del lead
             await scraper.open_lead_detail()
 
-            # Expandimos la sección "Contacto" en columna izquierda
-            await scraper.expand_contact_section()
-
-            # Expandimos el evento "Creación" en columna central
+            # Preparamos el panel central: Actividad -> Creacion -> Origen Id
             await scraper.expand_creation_event()
+
+            # Preparamos el panel izquierdo: Contacto -> Area de interes
+            await scraper.expand_contact_section()
 
             # La columna derecha (Gestión) se deja intacta — no se toca
 

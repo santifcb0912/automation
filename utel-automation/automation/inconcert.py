@@ -601,245 +601,618 @@ class InConcertScraper:
 
     async def open_lead_detail(self) -> bool:
         """
-        Abre el panel de gestión del lead encontrado.
-        Hace click en los 3 puntos (⋮) al lado derecho del lead
-        y selecciona "Gestionar" del menú desplegable.
-
-        Retorna:
-            True si el panel se abrió correctamente
-            False si hubo algún error
+        Abre el panel de gestion del lead encontrado.
+        Hace click en los 3 puntos al lado derecho del lead y selecciona Gestionar.
         """
         try:
-            logger.info("📂 Abriendo panel de gestión del lead...")
+            logger.info("Abriendo panel de gestion del lead...")
 
-            # Buscamos el botón de 3 puntos (menú contextual del lead)
-            three_dots_selectors = [
-                "button.more-options",
-                ".dropdown-toggle",
-                "button[aria-label='Más opciones']",
-                "button[aria-label='opciones']",
-                ".contact-row button:last-child",
-                "table tbody tr button",
-                "[class*='more'] button",
-                # Selector por el ícono de 3 puntos
-                "button:has(.icon-dots)",
-                "button:has([class*='dots'])",
-                # Último elemento clickeable en la fila
-                "table tbody tr td:last-child button",
-            ]
+            menu_opened = await self._open_result_row_actions_menu()
+            if not menu_opened:
+                logger.error("No se pudo abrir el menu de 3 puntos del lead")
+                return False
 
-            for selector in three_dots_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element and await element.is_visible():
-                        await BrowserManager.human_delay(300, 600)
-                        await element.click()
-                        await BrowserManager.human_delay(500, 1000)
-                        logger.info("✅ Click en 3 puntos (menú de opciones)")
-                        break
-                except Exception:
-                    continue
+            gestionar_clicked = await self._click_gestionar_option()
+            if not gestionar_clicked:
+                logger.error("No se encontro la opcion 'Gestionar' en el menu")
+                return False
 
-            # Buscamos y hacemos click en "Gestionar" del menú desplegable
-            gestionar_selectors = [
-                "a:has-text('Gestionar')",
-                "button:has-text('Gestionar')",
-                "li:has-text('Gestionar')",
-                ".dropdown-menu a:has-text('Gestionar')",
-                "[role='menuitem']:has-text('Gestionar')",
-            ]
-
-            for selector in gestionar_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element and await element.is_visible():
-                        await element.click()
-                        logger.info("✅ Click en 'Gestionar'")
-                        break
-                except Exception:
-                    continue
-
-            # Esperamos a que cargue el panel de gestión
             await self.page.wait_for_load_state("domcontentloaded")
             await BrowserManager.human_delay(2000, 3000)
 
-            # Verificamos que el panel se abrió correctamente
-            # El panel tiene el título "Gestionar Contacto"
             page_content = await self.page.content()
             if "Gestionar Contacto" in page_content or "Actividad" in page_content:
-                logger.info("✅ Panel de gestión abierto correctamente")
+                logger.info("Panel de gestion abierto correctamente")
                 return True
-            else:
-                logger.warning("⚠️  El panel podría no haberse abierto correctamente")
-                return True  # Continuamos igual — intentamos la captura
+
+            logger.warning("El panel podria no haberse abierto correctamente; se continua con la captura")
+            return True
 
         except Exception as e:
-            logger.error(f"❌ Error abriendo panel de gestión: {e}")
+            logger.error(f"Error abriendo panel de gestion: {e}")
             return False
+
+    async def _open_result_row_actions_menu(self) -> bool:
+        """Abre el menu de tres puntos de la primera fila visible de resultados."""
+        result_row_selectors = [
+            "table tbody tr",
+            ".contact-row",
+            ".result-row",
+            "[class*='contact-item']",
+            "[role='row']",
+        ]
+
+        for row_selector in result_row_selectors:
+            rows = self.page.locator(row_selector)
+            try:
+                count = await rows.count()
+            except Exception:
+                continue
+
+            for i in range(count):
+                row = rows.nth(i)
+                try:
+                    if await row.is_visible() and await self._click_actions_button_inside_row(row):
+                        logger.info("Menu de 3 puntos abierto desde la fila del lead")
+                        return True
+                except Exception as e:
+                    logger.debug(f"No se pudo abrir menu en fila {i}: {e}")
+
+        return await self._click_actions_button_by_position()
+
+    async def _click_actions_button_inside_row(self, row) -> bool:
+        """Hace click en el control mas a la derecha dentro de una fila."""
+        action_selectors = [
+            "button[aria-haspopup='menu']",
+            "button[aria-label*='opciones' i]",
+            "button[aria-label*='acciones' i]",
+            "button[title*='opciones' i]",
+            "button[title*='acciones' i]",
+            "button:has(svg)",
+            "button",
+            "[role='button']",
+        ]
+
+        for selector in action_selectors:
+            items = row.locator(selector)
+            try:
+                count = await items.count()
+            except Exception:
+                continue
+
+            candidates = []
+            for i in range(count):
+                item = items.nth(i)
+                try:
+                    if not await item.is_visible():
+                        continue
+                    box = await item.bounding_box()
+                    if box:
+                        candidates.append((box["x"], item))
+                except Exception:
+                    continue
+
+            for _, item in sorted(candidates, key=lambda value: value[0], reverse=True):
+                try:
+                    await item.scroll_into_view_if_needed(timeout=3000)
+                    await BrowserManager.human_delay(250, 500)
+                    await item.click(force=True, timeout=4000)
+                    await BrowserManager.human_delay(700, 1000)
+                    if await self._gestion_menu_is_visible():
+                        return True
+                except Exception:
+                    continue
+
+        try:
+            box = await row.bounding_box()
+            if box:
+                await self.page.mouse.click(box["x"] + box["width"] - 18, box["y"] + box["height"] / 2)
+                await BrowserManager.human_delay(700, 1000)
+                return await self._gestion_menu_is_visible()
+        except Exception:
+            pass
+
+        return False
+
+    async def _click_actions_button_by_position(self) -> bool:
+        """Fallback: hace click cerca del extremo derecho de la primera fila."""
+        try:
+            clicked = await self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0;
+                    };
+
+                    const rows = Array.from(document.querySelectorAll(
+                        'table tbody tr, .contact-row, .result-row, [class*=contact-item], [role=row]'
+                    )).filter(visible);
+
+                    const row = rows.find((item) => item.getBoundingClientRect().height > 20);
+                    if (!row) return false;
+
+                    const box = row.getBoundingClientRect();
+                    const target = document.elementFromPoint(box.right - 18, box.top + box.height / 2);
+                    if (!target) return false;
+
+                    target.dispatchEvent(new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    }));
+                    return true;
+                }
+                """
+            )
+            if clicked:
+                await BrowserManager.human_delay(700, 1000)
+                return await self._gestion_menu_is_visible()
+        except Exception as e:
+            logger.debug(f"Fallback por posicion fallo: {e}")
+
+        return False
+
+    async def _gestion_menu_is_visible(self) -> bool:
+        """Confirma que el desplegable contiene la opcion Gestionar."""
+        try:
+            gestionar = self.page.get_by_text("Gestionar", exact=True)
+            count = await gestionar.count()
+            for i in range(count):
+                if await gestionar.nth(i).is_visible():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def _click_gestionar_option(self) -> bool:
+        """Selecciona la opcion Gestionar del menu abierto."""
+        gestionar_selectors = [
+            "[role='menuitem']:has-text('Gestionar')",
+            ".dropdown-menu a:has-text('Gestionar')",
+            ".dropdown-menu button:has-text('Gestionar')",
+            "a:has-text('Gestionar')",
+            "button:has-text('Gestionar')",
+            "li:has-text('Gestionar')",
+            "div:has-text('Gestionar')",
+            "span:has-text('Gestionar')",
+        ]
+
+        for selector in gestionar_selectors:
+            option = self.page.locator(selector)
+            try:
+                count = await option.count()
+            except Exception:
+                continue
+
+            for i in range(count):
+                item = option.nth(i)
+                try:
+                    if await item.is_visible():
+                        await item.click(force=True, timeout=4000)
+                        logger.info("Click en 'Gestionar'")
+                        return True
+                except Exception:
+                    continue
+
+        return False
 
     async def expand_contact_section(self) -> None:
         """
-        En la columna IZQUIERDA del panel de gestión:
-        - Hace click en la sección "Contacto" para expandirla
-        - Hace scroll hasta el fondo de esa columna
+        En la columna izquierda abre Contacto y deja visible Area de interes.
         """
         try:
-            logger.info("👆 Expandiendo sección 'Contacto' en columna izquierda...")
+            logger.info("Preparando panel izquierdo: Contacto / Area de interes...")
 
-            # Buscamos y hacemos click en "Contacto"
-            contacto_selectors = [
-                "text='Contacto'",
-                "[class*='accordion']:has-text('Contacto')",
-                ".section-header:has-text('Contacto')",
-                "h3:has-text('Contacto')",
-                "h4:has-text('Contacto')",
-                "button:has-text('Contacto')",
-                "[class*='collapse-header']:has-text('Contacto')",
-            ]
+            left_panel = await self._find_left_contact_panel()
 
-            for selector in contacto_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element:
-                        await element.click()
-                        await BrowserManager.human_delay(500, 1000)
-                        logger.info("✅ Sección 'Contacto' expandida")
-                        break
-                except Exception:
-                    continue
+            clicked = await self._click_left_contact_header(left_panel)
+            if clicked:
+                await BrowserManager.human_delay(900, 1300)
+                logger.info("Seccion Contacto abierta en el panel izquierdo")
+            else:
+                logger.warning("No se pudo abrir Contacto en el panel izquierdo; se intentara scroll igualmente")
 
-            # Hacemos scroll hasta el fondo de la columna izquierda
-            # Buscamos el panel izquierdo del layout de 3 columnas
-            left_panel_selectors = [
-                ".contact-info-panel",
-                ".left-panel",
-                ".info-column",
-                "[class*='left-column']",
-                "[class*='info-panel']",
-                ".contact-detail-left",
-            ]
+            found_area = await self._scroll_panel_until_text(
+                panel=left_panel,
+                text="Area de interes",
+                max_steps=35,
+                step=160,
+                center=True,
+            )
 
-            for selector in left_panel_selectors:
-                try:
-                    panel = await self.page.query_selector(selector)
-                    if panel:
-                        # Hacemos scroll hasta el final del panel izquierdo
-                        await self.page.evaluate(
-                            "(el) => el.scrollTop = el.scrollHeight",
-                            panel
-                        )
-                        logger.info("✅ Scroll al fondo de columna izquierda")
-                        await BrowserManager.human_delay(500, 800)
-                        return
-                except Exception:
-                    continue
-
-            # Si no encontramos el panel específico, hacemos scroll general
-            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight / 3)")
-            logger.debug("ℹ️  Scroll general en página (panel izquierdo no identificado)")
+            if found_area:
+                logger.info("Area de interes visible en el panel izquierdo")
+            else:
+                logger.warning("No se encontro Area de interes en el panel izquierdo")
 
         except Exception as e:
-            logger.warning(f"⚠️  Error expandiendo sección Contacto: {e}")
+            logger.warning(f"Error preparando Contacto / Area de interes: {e}")
+
+    async def _find_left_contact_panel(self):
+        """Ubica la columna izquierda del detalle, evitando textos Contacto del panel central."""
+        try:
+            handle = await self.page.evaluate_handle(
+                """
+                () => {
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 180
+                            && r.height > 180;
+                    };
+
+                    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                    const panels = Array.from(document.querySelectorAll('aside, section, main, div'))
+                        .filter(visible)
+                        .map((el) => ({ el, box: el.getBoundingClientRect() }))
+                        .filter(({ box }) => box.left < viewportWidth * 0.36 && box.width < viewportWidth * 0.45)
+                        .filter(({ el }) => /informacion|contacto|campos siu|historial/i.test(el.textContent || ''))
+                        .sort((a, b) => {
+                            const aScrollable = a.el.scrollHeight > a.el.clientHeight + 20 ? 0 : 1;
+                            const bScrollable = b.el.scrollHeight > b.el.clientHeight + 20 ? 0 : 1;
+                            if (aScrollable !== bScrollable) return aScrollable - bScrollable;
+                            return (b.box.height * b.box.width) - (a.box.height * a.box.width);
+                        });
+
+                    return panels[0]?.el || document.elementFromPoint(160, window.innerHeight / 2) || document.body;
+                }
+                """
+            )
+            element = handle.as_element()
+            return element or await self.page.query_selector("body")
+        except Exception as e:
+            logger.debug(f"No se pudo ubicar panel izquierdo: {e}")
+            return await self.page.query_selector("body")
+
+    async def _click_left_contact_header(self, panel) -> bool:
+        """Hace click real en el acordeon Contacto de la columna izquierda."""
+        try:
+            target = await self.page.evaluate(
+                """
+                (panel) => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .trim();
+
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0;
+                    };
+
+                    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                    const root = panel || document;
+                    const items = Array.from(root.querySelectorAll('button, [role=button], h1, h2, h3, h4, div, span'))
+                        .filter((el) => {
+                            if (!visible(el)) return false;
+                            const box = el.getBoundingClientRect();
+                            return box.left < viewportWidth * 0.36 && normalize(el.textContent) === 'contacto';
+                        })
+                        .sort((a, b) => {
+                            const ar = a.getBoundingClientRect();
+                            const br = b.getBoundingClientRect();
+                            return ar.top - br.top || ar.left - br.left;
+                        });
+
+                    const label = items[0];
+                    if (!label) return null;
+
+                    const row = label.closest('button, [role=button], [class*=accordion], [class*=collapse], [class*=header]')
+                        || label.parentElement
+                        || label;
+
+                    const rowBox = row.getBoundingClientRect();
+                    const labelBox = label.getBoundingClientRect();
+
+                    return {
+                        // Click cerca del texto, no sobre la lupa/boton inferior.
+                        x: Math.max(labelBox.left + 12, rowBox.left + 18),
+                        y: labelBox.top + labelBox.height / 2,
+                    };
+                }
+                """,
+                panel,
+            )
+
+            if target:
+                await self.page.mouse.click(target["x"], target["y"])
+                await BrowserManager.human_delay(700, 1000)
+                return True
+
+            # Fallback por coordenadas segun la posicion del acordeon en la columna izquierda.
+            viewport = self.page.viewport_size or {"width": 1366, "height": 768}
+            await self.page.mouse.click(70, 70 if viewport["height"] > 500 else 60)
+            await BrowserManager.human_delay(700, 1000)
+            return True
+
+        except Exception as e:
+            logger.debug(f"Click en Contacto izquierdo fallo: {e}")
+            return False
+
+    async def _find_activity_panel(self):
+        """Ubica la columna central Actividad y su contenedor scrolleable."""
+        try:
+            handle = await self.page.evaluate_handle(
+                """
+                () => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .trim();
+
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 220
+                            && r.height > 220;
+                    };
+
+                    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                    const panels = Array.from(document.querySelectorAll('aside, section, main, div'))
+                        .filter(visible)
+                        .map((el) => ({ el, box: el.getBoundingClientRect(), text: normalize(el.textContent) }))
+                        .filter(({ box }) => box.left > viewportWidth * 0.22 && box.left < viewportWidth * 0.72)
+                        .filter(({ text }) => text.includes('actividad') || text.includes('creacion') || text.includes('automatizacion'))
+                        .sort((a, b) => {
+                            const aScrollable = a.el.scrollHeight > a.el.clientHeight + 20 ? 0 : 1;
+                            const bScrollable = b.el.scrollHeight > b.el.clientHeight + 20 ? 0 : 1;
+                            if (aScrollable !== bScrollable) return aScrollable - bScrollable;
+                            const aCenter = Math.abs((a.box.left + a.box.width / 2) - viewportWidth / 2);
+                            const bCenter = Math.abs((b.box.left + b.box.width / 2) - viewportWidth / 2);
+                            if (aCenter !== bCenter) return aCenter - bCenter;
+                            return (b.box.height * b.box.width) - (a.box.height * a.box.width);
+                        });
+
+                    const panel = panels[0]?.el;
+                    if (!panel) return document.elementFromPoint(viewportWidth / 2, window.innerHeight / 2) || document.body;
+
+                    const scrollableChild = Array.from(panel.querySelectorAll('*'))
+                        .filter(visible)
+                        .find((el) => el.scrollHeight > el.clientHeight + 20 && normalize(el.textContent).includes('actividad'));
+
+                    return scrollableChild || panel;
+                }
+                """
+            )
+            element = handle.as_element()
+            return element or await self.page.query_selector("body")
+        except Exception as e:
+            logger.debug(f"No se pudo ubicar panel Actividad: {e}")
+            return await self.page.query_selector("body")
 
     async def expand_creation_event(self) -> None:
         """
-        En la columna CENTRAL (Actividad) del panel de gestión:
-        - Hace scroll hacia abajo hasta encontrar el evento "Creación"
-        - Hace click en "Creación" para expandirlo
-        - Verifica que "Origen Id" sea visible
-
-        La columna DERECHA (Gestión) no se toca.
+        En la columna central baja hasta Creacion, la expande y deja visible Origen Id.
         """
         try:
-            logger.info("📋 Expandiendo evento 'Creación' en columna central...")
+            logger.info("Preparando panel central: Creacion / Origen Id...")
 
-            # Buscamos el panel central de actividad
-            activity_panel_selectors = [
-                ".activity-panel",
-                ".timeline-panel",
-                ".activity-column",
-                "[class*='activity']",
-                "[class*='timeline']",
-                ".center-panel",
-            ]
+            activity_panel = await self._find_activity_panel()
 
-            activity_panel = None
-            for selector in activity_panel_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element:
-                        activity_panel = element
-                        break
-                except Exception:
-                    continue
+            found_creation = await self._scroll_panel_until_text(
+                panel=activity_panel,
+                text="Creacion",
+                max_steps=35,
+                step=240,
+                center=True,
+            )
 
-            # Hacemos scroll en el panel de actividad para encontrar "Creación"
-            if activity_panel:
-                # Scrolleamos gradualmente hacia abajo en el panel de actividad
-                for _ in range(5):
-                    await self.page.evaluate(
-                        "(el) => el.scrollTop += 200",
-                        activity_panel
-                    )
-                    await BrowserManager.human_delay(200, 400)
+            if not found_creation:
+                logger.warning("No se encontro Creacion en Actividad")
+                return
+
+            clicked = await self._click_text_in_panel(activity_panel, "Creacion")
+            if clicked:
+                await BrowserManager.human_delay(900, 1300)
+                logger.info("Evento Creacion expandido")
             else:
-                # Si no encontramos el panel, hacemos scroll general
-                await self.page.evaluate("window.scrollBy(0, 400)")
+                logger.warning("Creacion se encontro, pero no se pudo hacer click")
 
-            await BrowserManager.human_delay(500, 800)
+            found_origin = await self._scroll_panel_until_text(
+                panel=activity_panel,
+                text="Origen Id",
+                max_steps=18,
+                step=120,
+                center=True,
+            )
 
-            # Buscamos y hacemos click en el evento "Creación"
-            creation_selectors = [
-                "text='Creación'",
-                "[class*='event']:has-text('Creación')",
-                ".timeline-item:has-text('Creación')",
-                ".activity-item:has-text('Creación')",
-                "[class*='activity-event']:has-text('Creación')",
-                "div:has-text('Creación') button",
-                ".event-header:has-text('Creación')",
-            ]
-
-            for selector in creation_selectors:
-                try:
-                    element = await self.page.query_selector(selector)
-                    if element:
-                        # Hacemos scroll al elemento para asegurarnos de que sea visible
-                        await element.scroll_into_view_if_needed()
-                        await BrowserManager.human_delay(300, 500)
-
-                        # Hacemos click para expandir
-                        await element.click()
-                        await BrowserManager.human_delay(800, 1200)
-                        logger.info("✅ Evento 'Creación' expandido")
-                        break
-                except Exception:
-                    continue
-
-            # Verificamos que "Origen Id" sea visible
-            await BrowserManager.human_delay(500, 800)
-
-            # Hacemos scroll un poco más para que "Origen Id" quede visible
-            try:
-                origen_id_element = await self.page.query_selector(
-                    "text='Origen Id'"
+            if not found_origin:
+                logger.info("No aparecio Origen Id; buscando Origen (ID) de evento")
+                found_origin = await self._scroll_panel_until_text(
+                    panel=activity_panel,
+                    text="Origen (ID) de evento",
+                    max_steps=18,
+                    step=120,
+                    center=True,
                 )
-                if origen_id_element:
-                    await origen_id_element.scroll_into_view_if_needed()
-                    logger.info("✅ 'Origen Id' visible en pantalla")
-                else:
-                    # Si no lo encontramos por texto, scrolleamos un poco más
-                    if activity_panel:
-                        await self.page.evaluate(
-                            "(el) => el.scrollTop += 150",
-                            activity_panel
-                        )
-            except Exception:
-                pass
 
-            logger.info("✅ Panel listo para captura de pantalla")
+            if found_origin:
+                logger.info("Campo de origen visible en el panel central")
+            else:
+                logger.warning("No se encontro Origen Id ni Origen (ID) de evento despues de expandir Creacion")
 
         except Exception as e:
-            logger.warning(f"⚠️  Error expandiendo evento Creación: {e}")
+            logger.warning(f"Error preparando Creacion / Origen Id: {e}")
+
+    async def _find_panel_by_heading(self, heading: str, side: str = "center"):
+        """Encuentra el contenedor scrolleable mas cercano a un titulo de panel."""
+        try:
+            handle = await self.page.evaluate_handle(
+                """
+                ({ heading, side }) => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .trim();
+
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0;
+                    };
+
+                    const wanted = normalize(heading);
+                    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+
+                    const candidates = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,button,div,span'))
+                        .filter((el) => visible(el) && normalize(el.textContent).includes(wanted));
+
+                    const sideScore = (el) => {
+                        const r = el.getBoundingClientRect();
+                        const center = r.left + r.width / 2;
+                        if (side === 'left') return center;
+                        if (side === 'right') return Math.abs(viewportWidth - center);
+                        return Math.abs(center - viewportWidth / 2);
+                    };
+
+                    candidates.sort((a, b) => sideScore(a) - sideScore(b));
+
+                    for (const label of candidates) {
+                        let node = label;
+                        let best = null;
+                        for (let i = 0; node && i < 9; i += 1, node = node.parentElement) {
+                            if (!visible(node)) continue;
+                            const r = node.getBoundingClientRect();
+                            const scrollable = node.scrollHeight > node.clientHeight + 30;
+                            const panelSized = r.height > 220 && r.width > 220;
+                            if (scrollable && panelSized) return node;
+                            if (!best && panelSized) best = node;
+                        }
+                        if (best) {
+                            const scrollableChild = Array.from(best.querySelectorAll('*'))
+                                .find((el) => visible(el) && el.scrollHeight > el.clientHeight + 30);
+                            return scrollableChild || best;
+                        }
+                    }
+
+                    return document.scrollingElement || document.documentElement;
+                }
+                """,
+                {"heading": heading, "side": side},
+            )
+            element = handle.as_element()
+            return element or await self.page.query_selector("body")
+        except Exception as e:
+            logger.debug(f"No se pudo ubicar panel '{heading}': {e}")
+            return await self.page.query_selector("body")
+
+    async def _scroll_panel_until_text(self, panel, text: str, max_steps: int = 20, step: int = 200, center: bool = True) -> bool:
+        """Hace scroll dentro de un panel hasta encontrar un texto visible."""
+        for _ in range(max_steps):
+            try:
+                found = await self.page.evaluate(
+                    """
+                    ({ panel, text, step, center }) => {
+                        const normalize = (value) => String(value || '')
+                            .normalize('NFD')
+                            .replace(/[\u0300-\u036f]/g, '')
+                            .toLowerCase()
+                            .trim();
+
+                        const visible = (el) => {
+                            const s = window.getComputedStyle(el);
+                            const r = el.getBoundingClientRect();
+                            return s.display !== 'none'
+                                && s.visibility !== 'hidden'
+                                && r.width > 0
+                                && r.height > 0;
+                        };
+
+                        const wanted = normalize(text);
+                        const root = panel || document.scrollingElement || document.documentElement;
+                        const nodes = Array.from(root.querySelectorAll('*'))
+                            .filter((el) => visible(el) && normalize(el.textContent).includes(wanted))
+                            .sort((a, b) => normalize(a.textContent).length - normalize(b.textContent).length);
+
+                        if (nodes[0]) {
+                            nodes[0].scrollIntoView({
+                                block: center ? 'center' : 'nearest',
+                                inline: 'nearest',
+                                behavior: 'instant'
+                            });
+                            return true;
+                        }
+
+                        root.scrollTop += step;
+                        return false;
+                    }
+                    """,
+                    {"panel": panel, "text": text, "step": step, "center": center},
+                )
+                if found:
+                    await BrowserManager.human_delay(350, 650)
+                    return True
+                await BrowserManager.human_delay(180, 320)
+            except Exception as e:
+                logger.debug(f"Scroll buscando '{text}' fallo: {e}")
+                break
+
+        return False
+
+    async def _click_text_in_panel(self, panel, text: str) -> bool:
+        """Hace click sobre un texto dentro de un panel, normalizando tildes."""
+        try:
+            clicked = await self.page.evaluate(
+                """
+                ({ panel, text }) => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .trim();
+
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0
+                            && r.height > 0;
+                    };
+
+                    const wanted = normalize(text);
+                    const root = panel || document;
+                    const items = Array.from(root.querySelectorAll('button, [role=button], h1, h2, h3, h4, h5, div, span'))
+                        .filter((el) => visible(el) && normalize(el.textContent).includes(wanted));
+
+                    if (!items[0]) return false;
+                    const target = items
+                        .sort((a, b) => normalize(a.textContent).length - normalize(b.textContent).length)[0];
+
+                    target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+                    target.dispatchEvent(new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    }));
+                    return true;
+                }
+                """,
+                {"panel": panel, "text": text},
+            )
+            return bool(clicked)
+        except Exception as e:
+            logger.debug(f"Click en texto '{text}' fallo: {e}")
+            return False
 
     def cancel(self) -> None:
         """

@@ -28,6 +28,9 @@ gspread==6.0.2
 # Librería para autenticarse con Google (Sheets + Drive)
 google-auth==2.28.2
 
+# Flujo OAuth de usuario para Google (alternativa a Service Account)
+google-auth-oauthlib==1.2.0
+
 # Librería oficial de Google para Drive y Sheets
 google-api-python-client==2.120.0
 

@@ -16,13 +16,7 @@ from googleapiclient.http import MediaFileUpload       # Para subir archivos a D
 from loguru import logger                               # Para logs
 
 from config.settings import settings                    # Configuración del sistema
-
-
-# Permisos necesarios para Google Drive
-GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/drive",           # Acceso completo a Drive
-    "https://www.googleapis.com/auth/spreadsheets",    # Acceso a Sheets
-]
+from config.google_auth import get_google_credentials
 
 
 class ScreenshotManager:
@@ -64,10 +58,7 @@ class ScreenshotManager:
             logger.info("🔗 Conectando con Google Drive...")
 
             # Cargamos las credenciales del archivo JSON de la Service Account
-            credentials = Credentials.from_service_account_file(
-                settings.google_credentials_path,
-                scopes=GOOGLE_SCOPES
-            )
+            credentials = get_google_credentials()
 
             # Construimos el servicio de Drive API v3
             # Es la versión más actual de la API de Google Drive
@@ -114,7 +105,9 @@ class ScreenshotManager:
         results = self._drive_service.files().list(
             q=query,
             spaces="drive",
-            fields="files(id, name)"
+            fields="files(id, name, driveId)",
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
         ).execute()
 
         folders = results.get("files", [])
@@ -135,7 +128,8 @@ class ScreenshotManager:
 
             folder = self._drive_service.files().create(
                 body=folder_metadata,
-                fields="id"
+                fields="id",
+                supportsAllDrives=True,
             ).execute()
 
             self._drive_folder_id = folder["id"]
@@ -160,7 +154,8 @@ class ScreenshotManager:
 
             self._drive_service.permissions().create(
                 fileId=folder_id,
-                body=permission
+                body=permission,
+                supportsAllDrives=True,
             ).execute()
 
             logger.info("✅ Carpeta de Drive configurada como pública")
@@ -302,7 +297,8 @@ class ScreenshotManager:
             uploaded_file = self._drive_service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields="id"  # Solo necesitamos el ID del archivo subido
+                fields="id",  # Solo necesitamos el ID del archivo subido
+                supportsAllDrives=True,
             ).execute()
 
             file_id = uploaded_file["id"]
@@ -336,7 +332,8 @@ class ScreenshotManager:
 
             self._drive_service.permissions().create(
                 fileId=file_id,
-                body=permission
+                body=permission,
+                supportsAllDrives=True,
             ).execute()
 
             logger.debug(f"✅ Archivo {file_id} configurado como público")

@@ -9,14 +9,7 @@ from google.oauth2.service_account import Credentials  # Para autenticarse con G
 from typing import Optional                             # Para campos opcionales
 from loguru import logger                               # Para logs
 
-from config.settings import settings                    # Configuración del sistema
-
-# Mismos permisos que en reader.py
-GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
+from config.google_auth import get_google_credentials
 
 class SheetsWriter:
     """
@@ -40,10 +33,7 @@ class SheetsWriter:
             logger.info("🔗 SheetsWriter conectando con Google...")
 
             # Cargamos las credenciales de la Service Account
-            credentials = Credentials.from_service_account_file(
-                settings.google_credentials_path,
-                scopes=GOOGLE_SCOPES
-            )
+            credentials = get_google_credentials()
 
             # Creamos el cliente autenticado
             self._client = gspread.authorize(credentials)

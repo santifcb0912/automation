@@ -38,6 +38,26 @@ class Settings:
             default="./config/google_credentials.json"
         )
 
+        # Modo de autenticacion de Google:
+        # - service_account: usa config/google_credentials.json
+        # - oauth: usa el navegador y guarda un token de usuario local
+        self.google_auth_mode: str = self._get(
+            "GOOGLE_AUTH_MODE",
+            default="service_account"
+        )
+
+        # JSON de cliente OAuth tipo "Desktop app", descargado desde Google Cloud
+        self.google_oauth_client_secret_path: str = self._get(
+            "GOOGLE_OAUTH_CLIENT_SECRET_PATH",
+            default="./config/google_oauth_client_secret.json"
+        )
+
+        # Token local generado tras autorizar tu usuario en el navegador
+        self.google_oauth_token_path: str = self._get(
+            "GOOGLE_OAUTH_TOKEN_PATH",
+            default="./config/google_oauth_token.json"
+        )
+
         # Nombre de la carpeta en Drive donde se guardan las capturas
         self.google_drive_folder_name: str = self._get(
             "GOOGLE_DRIVE_FOLDER_NAME",

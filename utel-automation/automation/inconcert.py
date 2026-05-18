@@ -803,10 +803,10 @@ class InConcertScraper:
 
     async def expand_contact_section(self) -> None:
         """
-        En la columna izquierda abre Contacto y deja visible Area de interes.
+        En la columna izquierda abre Contacto y deja visible Nivel de programa.
         """
         try:
-            logger.info("Preparando panel izquierdo: Contacto / Area de interes...")
+            logger.info("Preparando panel izquierdo: Contacto / Nivel de programa...")
 
             left_panel = await self._find_left_contact_panel()
 
@@ -817,21 +817,167 @@ class InConcertScraper:
             else:
                 logger.warning("No se pudo abrir Contacto en el panel izquierdo; se intentara scroll igualmente")
 
-            found_area = await self._scroll_panel_until_text(
-                panel=left_panel,
-                text="Area de interes",
-                max_steps=35,
-                step=160,
-                center=True,
+            found_area = await self._scroll_left_column_until_text(
+                text="Nivel de programa",
+                max_steps=45,
+                step=150,
             )
-
             if found_area:
-                logger.info("Area de interes visible en el panel izquierdo")
+                logger.info("Nivel de programa visible en el panel izquierdo")
             else:
-                logger.warning("No se encontro Area de interes en el panel izquierdo")
+                logger.warning("No se encontro Nivel de programa en el panel izquierdo")
 
         except Exception as e:
-            logger.warning(f"Error preparando Contacto / Area de interes: {e}")
+            logger.warning(f"Error preparando Contacto / Nivel de programa: {e}")
+
+    async def _scroll_left_column_until_text(self, text: str, max_steps: int = 35, step: int = 150) -> bool:
+        """Busca un texto visible real en la columna izquierda y scrollea hasta encontrarlo."""
+        for attempt in range(max_steps):
+            try:
+                found = await self.page.evaluate(
+                    """
+                    ({ text, step }) => {
+                        const normalize = (value) => String(value || '')
+                            .normalize('NFD')
+                            .replace(/[\u0300-\u036f]/g, '')
+                            .toLowerCase()
+                            .trim();
+
+                        const ownText = (el) => Array.from(el.childNodes || [])
+                            .filter((node) => node.nodeType === Node.TEXT_NODE)
+                            .map((node) => node.textContent || '')
+                            .join(' ');
+
+                        const visible = (el) => {
+                            const s = window.getComputedStyle(el);
+                            const r = el.getBoundingClientRect();
+                            return s.display !== 'none'
+                                && s.visibility !== 'hidden'
+                                && r.width > 0
+                                && r.height > 0;
+                        };
+
+                        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                        const wanted = normalize(text);
+                        const matches = Array.from(document.querySelectorAll('div, span, label, p, strong'))
+                            .map((el) => ({ el, label: normalize(ownText(el) || el.getAttribute('aria-label') || '') }))
+                            .filter(({ el, label }) => {
+                                if (!label || label.length > 80) return false;
+                                if (!visible(el)) return false;
+                                const box = el.getBoundingClientRect();
+                                return box.left < viewportWidth * 0.36
+                                    && box.top > 0
+                                    && box.bottom < window.innerHeight
+                                    && (label === wanted || label.includes(wanted));
+                            })
+                            .sort((a, b) => a.label.length - b.label.length);
+
+                        if (matches[0]) {
+                            matches[0].el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+                            return true;
+                        }
+
+                        const scrollables = Array.from(document.querySelectorAll('aside, section, main, div'))
+                            .filter((el) => {
+                                if (!visible(el)) return false;
+                                const box = el.getBoundingClientRect();
+                                return box.left < viewportWidth * 0.36
+                                    && box.right < viewportWidth * 0.42
+                                    && box.width > 180
+                                    && box.height > 180
+                                    && el.scrollHeight > el.clientHeight + 20;
+                            })
+                            .sort((a, b) => {
+                                const ar = a.getBoundingClientRect();
+                                const br = b.getBoundingClientRect();
+                                const aOverflow = a.scrollHeight - a.clientHeight;
+                                const bOverflow = b.scrollHeight - b.clientHeight;
+                                if (aOverflow !== bOverflow) return bOverflow - aOverflow;
+                                return (br.height * br.width) - (ar.height * ar.width);
+                            });
+
+                        if (scrollables.length) {
+                            const el = scrollables[0];
+                            el.scrollTop += step;
+                            el.dispatchEvent(new Event('scroll', { bubbles: true }));
+                            return false;
+                        }
+
+                        window.scrollBy(0, step);
+                        return false;
+                    }
+                    """,
+                    {"text": text, "step": step},
+                )
+
+                if found:
+                    logger.info(f"{text} visible en la columna izquierda")
+                    await BrowserManager.human_delay(350, 650)
+                    return True
+
+                await self.page.mouse.move(180, 430)
+                await self.page.mouse.wheel(0, step)
+                await BrowserManager.human_delay(180, 320)
+
+            except Exception as e:
+                logger.debug(f"Scroll visual buscando '{text}' fallo en intento {attempt + 1}: {e}")
+                break
+
+        return False
+
+    async def _find_open_contact_fields_panel(self):
+        """Ubica el contenedor scrolleable de campos dentro de Contacto ya abierto."""
+        try:
+            handle = await self.page.evaluate_handle(
+                """
+                () => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase();
+
+                    const visible = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 180
+                            && r.height > 120;
+                    };
+
+                    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                    const candidates = Array.from(document.querySelectorAll('aside, section, main, div'))
+                        .filter(visible)
+                        .map((el) => ({ el, box: el.getBoundingClientRect(), text: normalize(el.textContent || '') }))
+                        .filter(({ box }) => box.left < viewportWidth * 0.36 && box.width < viewportWidth * 0.45)
+                        .filter(({ text }) =>
+                            text.includes('contacto') && (
+                                text.includes('nivel de programa')
+                                || text.includes('programa de interes')
+                                || text.includes('tipo de programa')
+                                || text.includes('zona regional')
+                                || text.includes('nivel de programa')
+                                || text.includes('area de interes')
+                                || text.includes('telefono')
+                                || text.includes('correo')
+                            )
+                        )
+                        .sort((a, b) => {
+                            const aScrollable = a.el.scrollHeight > a.el.clientHeight + 20 ? 0 : 1;
+                            const bScrollable = b.el.scrollHeight > b.el.clientHeight + 20 ? 0 : 1;
+                            if (aScrollable !== bScrollable) return aScrollable - bScrollable;
+                            return (b.box.height * b.box.width) - (a.box.height * a.box.width);
+                        });
+
+                    return candidates[0]?.el || document.elementFromPoint(180, window.innerHeight / 2) || document.body;
+                }
+                """
+            )
+            element = handle.as_element()
+            return element or await self.page.query_selector("body")
+        except Exception as e:
+            logger.debug(f"No se pudo ubicar subpanel de Contacto abierto: {e}")
+            return await self._find_left_contact_panel()
 
     async def _find_left_contact_panel(self):
         """Ubica la columna izquierda del detalle, evitando textos Contacto del panel central."""
@@ -872,11 +1018,11 @@ class InConcertScraper:
             return await self.page.query_selector("body")
 
     async def _click_left_contact_header(self, panel) -> bool:
-        """Hace click real en el acordeon Contacto de la columna izquierda."""
+        """Abre el acordeon Contacto con clicks reales sobre la fila visible."""
         try:
-            target = await self.page.evaluate(
+            points = await self.page.evaluate(
                 """
-                (panel) => {
+                () => {
                     const normalize = (value) => String(value || '')
                         .normalize('NFD')
                         .replace(/[\u0300-\u036f]/g, '')
@@ -893,8 +1039,7 @@ class InConcertScraper:
                     };
 
                     const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-                    const root = panel || document;
-                    const items = Array.from(root.querySelectorAll('button, [role=button], h1, h2, h3, h4, div, span'))
+                    const labels = Array.from(document.querySelectorAll('button, [role=button], h1, h2, h3, h4, div, span'))
                         .filter((el) => {
                             if (!visible(el)) return false;
                             const box = el.getBoundingClientRect();
@@ -906,39 +1051,72 @@ class InConcertScraper:
                             return ar.top - br.top || ar.left - br.left;
                         });
 
-                    const label = items[0];
-                    if (!label) return null;
+                    const label = labels[0];
+                    if (!label) return [];
 
-                    const row = label.closest('button, [role=button], [class*=accordion], [class*=collapse], [class*=header]')
-                        || label.parentElement
-                        || label;
-
-                    const rowBox = row.getBoundingClientRect();
                     const labelBox = label.getBoundingClientRect();
+                    const panel = label.closest('aside, section, main, [class*=card], [class*=panel]')
+                        || label.parentElement
+                        || document.body;
+                    const panelBox = panel.getBoundingClientRect();
+                    const y = labelBox.top + labelBox.height / 2;
 
-                    return {
-                        // Click cerca del texto, no sobre la lupa/boton inferior.
-                        x: Math.max(labelBox.left + 12, rowBox.left + 18),
-                        y: labelBox.top + labelBox.height / 2,
-                    };
+                    return [
+                        { x: panelBox.right - 22, y },
+                        { x: panelBox.right - 44, y },
+                        { x: labelBox.left + 18, y },
+                    ];
+                }
+                """
+            )
+
+            if not points:
+                logger.warning("No se encontro visualmente el texto Contacto en el panel izquierdo")
+                return False
+
+            for index, point in enumerate(points, start=1):
+                logger.info(f"Intento {index}: click en Contacto x={point['x']} y={point['y']}")
+                await self.page.mouse.move(point["x"], point["y"])
+                await BrowserManager.human_delay(150, 250)
+                await self.page.mouse.click(point["x"], point["y"])
+                await BrowserManager.human_delay(900, 1200)
+
+                fresh_panel = await self._find_left_contact_panel()
+                if await self._left_contact_section_is_open(fresh_panel):
+                    logger.info("Contacto quedo abierto")
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"Click en Contacto izquierdo fallo: {e}")
+            return False
+
+    async def _left_contact_section_is_open(self, panel) -> bool:
+        """Detecta si Contacto ya desplego sus campos en la columna izquierda."""
+        try:
+            return await self.page.evaluate(
+                """
+                (panel) => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase();
+                    const root = panel || document;
+                    const text = normalize(root.textContent || '');
+                    return text.includes('nivel de programa')
+                                || text.includes('area de interes')
+                        || text.includes('nivel de programa')
+                                || text.includes('programa de interes')
+                        || text.includes('tipo de programa')
+                        || text.includes('zona regional')
+                        || text.includes('telefono')
+                        || text.includes('correo');
                 }
                 """,
                 panel,
             )
-
-            if target:
-                await self.page.mouse.click(target["x"], target["y"])
-                await BrowserManager.human_delay(700, 1000)
-                return True
-
-            # Fallback por coordenadas segun la posicion del acordeon en la columna izquierda.
-            viewport = self.page.viewport_size or {"width": 1366, "height": 768}
-            await self.page.mouse.click(70, 70 if viewport["height"] > 500 else 60)
-            await BrowserManager.human_delay(700, 1000)
-            return True
-
-        except Exception as e:
-            logger.debug(f"Click en Contacto izquierdo fallo: {e}")
+        except Exception:
             return False
 
     async def _find_activity_panel(self):

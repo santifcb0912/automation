@@ -13,14 +13,7 @@ from loguru import logger                   # Para logs
 
 from config.settings import settings        # Configuración del sistema
 from config.models import LeadRow, FormType # Modelos de datos
-
-
-# Permisos que necesitamos de Google
-# Estos "scopes" le dicen a Google qué puede hacer el sistema
-GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",  # Leer y escribir en Sheets
-    "https://www.googleapis.com/auth/drive",          # Subir archivos a Drive
-]
+from config.google_auth import get_google_credentials
 
 
 class SheetsReader:
@@ -48,10 +41,7 @@ class SheetsReader:
 
             # Cargamos las credenciales desde el archivo JSON de la Service Account
             # Este archivo lo descargaste de Google Cloud Console
-            credentials = Credentials.from_service_account_file(
-                settings.google_credentials_path,  # Ruta al archivo JSON
-                scopes=GOOGLE_SCOPES               # Permisos que necesitamos
-            )
+            credentials = get_google_credentials()
 
             # Creamos el cliente de gspread con las credenciales
             self._client = gspread.authorize(credentials)

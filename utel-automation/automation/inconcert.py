@@ -1,20 +1,20 @@
-# ============================================================
+﻿# ============================================================
 # automation/inconcert.py
 # Automatiza el flujo completo dentro del CRM InConcert:
 # 1. Login con credenciales
-# 2. Búsqueda del lead por correo con reintentos
-# 3. Apertura del panel de gestión
-# 4. Expansión de secciones para la captura
+# 2. BÃºsqueda del lead por correo con reintentos
+# 3. Apertura del panel de gestiÃ³n
+# 4. ExpansiÃ³n de secciones para la captura
 # Equivalente a un @Service complejo en Spring Boot
 # ============================================================
 
-import asyncio                                          # Para esperas asíncronas
+import asyncio                                          # Para esperas asÃ­ncronas
 from typing import Optional                             # Para tipos opcionales
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 from loguru import logger                               # Para logs
 
-from config.settings import settings                    # Configuración del sistema
-from config.countries import Country                    # Datos del país
+from config.settings import settings                    # ConfiguraciÃ³n del sistema
+from config.countries import Country                    # Datos del paÃ­s
 from automation.browser import BrowserManager           # Para delays humanos
 
 
@@ -22,43 +22,43 @@ class InConcertScraper:
     """
     Automatiza el flujo dentro del CRM InConcert.
     Equivalente a un @Service en Spring Boot que contiene
-    la lógica de negocio para interactuar con el CRM.
+    la lÃ³gica de negocio para interactuar con el CRM.
 
-    Recibe inyectadas la página de Playwright y el país.
+    Recibe inyectadas la pÃ¡gina de Playwright y el paÃ­s.
     """
 
     def __init__(self, page: Page, country: Country):
         """
-        Constructor con inyección de dependencias.
+        Constructor con inyecciÃ³n de dependencias.
         Equivalente a @Autowired en Spring Boot.
 
-        Parámetros:
-            page: pestaña del navegador para InConcert
-            country: configuración del país (URL de InConcert)
+        ParÃ¡metros:
+            page: pestaÃ±a del navegador para InConcert
+            country: configuraciÃ³n del paÃ­s (URL de InConcert)
         """
-        # La pestaña del navegador donde operamos InConcert
+        # La pestaÃ±a del navegador donde operamos InConcert
         self.page = page
 
-        # Configuración del país — tiene la URL del CRM
+        # ConfiguraciÃ³n del paÃ­s â€” tiene la URL del CRM
         self.country = country
 
         # Flag para cancelar el proceso si el usuario presiona "Detener"
         self._cancelled = False
 
-        logger.debug(f"🔧 InConcertScraper creado para {country.id}")
+        logger.debug(f"ðŸ”§ InConcertScraper creado para {country.id}")
 
     async def login(self) -> bool:
         """
         Navega a InConcert y hace login con las credenciales del .env.
-        Las mismas credenciales sirven para todos los países.
+        Las mismas credenciales sirven para todos los paÃ­ses.
 
         Retorna:
             True si el login fue exitoso
-            False si hubo algún problema
+            False si hubo algÃºn problema
         """
         try:
             # Construimos la URL de contactos directamente
-            # Así llegamos directo a la sección de búsqueda
+            # AsÃ­ llegamos directo a la secciÃ³n de bÃºsqueda
             # Construimos la URL correcta de contactos
             # inconcert_url termina en /mas/home
             # La URL de contactos es /mas/contact/people
@@ -67,7 +67,7 @@ class InConcertScraper:
                 base = base[:-5]  # Quitamos "/home"
             contacts_url = base + "/contact/people"
 
-            logger.info(f"🔐 Navegando a InConcert: {contacts_url}")
+            logger.info(f"ðŸ” Navegando a InConcert: {contacts_url}")
 
             # Navegamos a la URL del CRM
             await self.page.goto(
@@ -76,17 +76,17 @@ class InConcertScraper:
                 timeout=30000
             )
 
-            # Pausa humana después de cargar
+            # Pausa humana despuÃ©s de cargar
             await BrowserManager.human_delay(1500, 2500)
 
-            # Verificamos si ya estamos logueados (puede haber sesión activa)
-            # Si vemos el título "Contactos", ya estamos dentro
+            # Verificamos si ya estamos logueados (puede haber sesiÃ³n activa)
+            # Si vemos el tÃ­tulo "Contactos", ya estamos dentro
             if await self._is_logged_in():
-                logger.info("✅ Sesión activa detectada — ya estamos dentro")
+                logger.info("âœ… SesiÃ³n activa detectada â€” ya estamos dentro")
                 return True
 
             # Si no estamos logueados, buscamos el formulario de login
-            logger.info("🔑 Realizando login...")
+            logger.info("ðŸ”‘ Realizando login...")
 
             # Selectores posibles para el campo de usuario
             user_selectors = [
@@ -110,14 +110,14 @@ class InConcertScraper:
                             settings.inconcert_user,
                             delay=80
                         )
-                        logger.info("✅ Usuario ingresado")
+                        logger.info("âœ… Usuario ingresado")
                         break
                 except Exception:
                     continue
 
             await BrowserManager.human_delay(300, 600)
 
-            # Selectores posibles para el campo de contraseña
+            # Selectores posibles para el campo de contraseÃ±a
             password_selectors = [
                 "input[type='password']",
                 "input[name='password']",
@@ -126,7 +126,7 @@ class InConcertScraper:
                 "input[id*='pass']",
             ]
 
-            # Llenamos el campo de contraseña
+            # Llenamos el campo de contraseÃ±a
             for selector in password_selectors:
                 try:
                     element = await self.page.query_selector(selector)
@@ -136,21 +136,21 @@ class InConcertScraper:
                             settings.inconcert_password,
                             delay=80
                         )
-                        logger.info("✅ Contraseña ingresada")
+                        logger.info("âœ… ContraseÃ±a ingresada")
                         break
                 except Exception:
                     continue
 
             await BrowserManager.human_delay(500, 1000)
 
-            # Hacemos click en el botón de login
+            # Hacemos click en el botÃ³n de login
             login_button_selectors = [
                 "button[type='submit']",
                 "input[type='submit']",
                 "button:has-text('Ingresar')",
                 "button:has-text('Login')",
                 "button:has-text('Entrar')",
-                "button:has-text('Iniciar sesión')",
+                "button:has-text('Iniciar sesiÃ³n')",
                 ".btn-login",
                 ".login-btn",
             ]
@@ -160,25 +160,25 @@ class InConcertScraper:
                     element = await self.page.query_selector(selector)
                     if element and await element.is_visible():
                         await element.click()
-                        logger.info("✅ Click en botón de login")
+                        logger.info("âœ… Click en botÃ³n de login")
                         break
                 except Exception:
                     continue
 
-            # Esperamos a que cargue el dashboard después del login
+            # Esperamos a que cargue el dashboard despuÃ©s del login
             await self.page.wait_for_load_state("networkidle", timeout=15000)
             await BrowserManager.human_delay(2000, 3000)
 
             # Verificamos si el login fue exitoso
             if await self._is_logged_in():
-                logger.info("✅ Login exitoso en InConcert")
+                logger.info("âœ… Login exitoso en InConcert")
                 return True
             else:
-                logger.error("❌ Login fallido — verifica credenciales en .env")
+                logger.error("âŒ Login fallido â€” verifica credenciales en .env")
                 return False
 
         except Exception as e:
-            logger.error(f"❌ Error en login de InConcert: {e}")
+            logger.error(f"âŒ Error en login de InConcert: {e}")
             return False
 
     async def _is_logged_in(self) -> bool:
@@ -188,12 +188,12 @@ class InConcertScraper:
         """
         try:
             # Buscamos elementos del dashboard de InConcert
-            # Estos solo aparecen cuando el usuario está autenticado
+            # Estos solo aparecen cuando el usuario estÃ¡ autenticado
             dashboard_indicators = [
                 ".mas-sidebar",           # Barra lateral del CRM
                 "[class*='sidebar']",     # Cualquier sidebar
                 ".contact-list",          # Lista de contactos
-                "h1:has-text('Contactos')",  # Título de la sección
+                "h1:has-text('Contactos')",  # TÃ­tulo de la secciÃ³n
                 "[data-testid='contacts']",
             ]
 
@@ -212,72 +212,72 @@ class InConcertScraper:
 
     async def search_lead(self, email: str) -> bool:
         """
-        Busca el lead por correo electrónico en InConcert.
+        Busca el lead por correo electrÃ³nico en InConcert.
         Reintenta cada 30 segundos hasta encontrarlo o agotar el tiempo.
 
         Sistema de reintentos:
-        - Máximo 10 intentos
+        - MÃ¡ximo 10 intentos
         - 30 segundos entre cada intento
         - Total: hasta 5 minutos de espera
 
-        Parámetros:
+        ParÃ¡metros:
             email: correo de prueba a buscar (ej: test190326N001@testUtel.com)
 
         Retorna:
-            True si el lead apareció
+            True si el lead apareciÃ³
             False si pasaron 5 minutos sin aparecer (timeout)
         """
-        # Calculamos el número máximo de intentos
+        # Calculamos el nÃºmero mÃ¡ximo de intentos
         max_attempts = settings.lead_timeout_seconds // settings.lead_retry_interval_seconds
         # Nos aseguramos de tener al menos 1 intento
         max_attempts = max(max_attempts, 1)
 
-        logger.info(f"🔍 Buscando lead: {email}")
-        logger.info(f"⏱️  Máximo {max_attempts} intentos cada {settings.lead_retry_interval_seconds}s")
+        logger.info(f"ðŸ” Buscando lead: {email}")
+        logger.info(f"â±ï¸  MÃ¡ximo {max_attempts} intentos cada {settings.lead_retry_interval_seconds}s")
 
         for attempt in range(1, max_attempts + 1):
 
-            # Si el usuario canceló el proceso, salimos
+            # Si el usuario cancelÃ³ el proceso, salimos
             if self._cancelled:
-                logger.info("🛑 Búsqueda cancelada por el usuario")
+                logger.info("ðŸ›‘ BÃºsqueda cancelada por el usuario")
                 return False
 
-            logger.info(f"🔄 Intento {attempt}/{max_attempts} buscando: {email}")
+            logger.info(f"ðŸ”„ Intento {attempt}/{max_attempts} buscando: {email}")
 
-            # Intentamos la búsqueda en este intento
+            # Intentamos la bÃºsqueda en este intento
             found = await self._perform_search(email)
 
             if found:
-                logger.success(f"✅ Lead encontrado en intento {attempt}: {email}")
+                logger.success(f"âœ… Lead encontrado en intento {attempt}: {email}")
                 return True
 
-            # Si no encontramos el lead y no es el último intento, esperamos
+            # Si no encontramos el lead y no es el Ãºltimo intento, esperamos
             if attempt < max_attempts:
-                logger.info(f"⏳ Lead no encontrado — esperando {settings.lead_retry_interval_seconds}s...")
+                logger.info(f"â³ Lead no encontrado â€” esperando {settings.lead_retry_interval_seconds}s...")
                 await asyncio.sleep(settings.lead_retry_interval_seconds)
 
-        # Si llegamos aquí, se agotaron los intentos
-        logger.warning(f"❌ TIMEOUT — Lead no llegó en {settings.lead_timeout_seconds}s: {email}")
+        # Si llegamos aquÃ­, se agotaron los intentos
+        logger.warning(f"âŒ TIMEOUT â€” Lead no llegÃ³ en {settings.lead_timeout_seconds}s: {email}")
         return False
 
     async def _perform_search(self, email: str) -> bool:
         """
-        Ejecuta una búsqueda del lead en la sección de Contactos.
+        Ejecuta una bÃºsqueda del lead en la secciÃ³n de Contactos.
         Se llama en cada reintento de search_lead().
 
         Proceso:
-        1. Asegurarse de estar en la sección Contactos
+        1. Asegurarse de estar en la secciÃ³n Contactos
         2. Seleccionar filtro "Email"
         3. Escribir el correo
         4. Hacer click en la lupa
-        5. Verificar si apareció un resultado
+        5. Verificar si apareciÃ³ un resultado
 
         Retorna:
-            True si encontró el lead
-            False si no apareció
+            True si encontrÃ³ el lead
+            False si no apareciÃ³
         """
         try:
-            # Verificamos que estemos en la sección correcta de contactos
+            # Verificamos que estemos en la secciÃ³n correcta de contactos
             current_url = self.page.url
             if "contact/people" not in current_url:
                 # Construimos la URL correcta quitando /home y agregando /contact/people
@@ -288,17 +288,17 @@ class InConcertScraper:
                 await self.page.goto(contacts_url, wait_until="domcontentloaded")
                 await BrowserManager.human_delay(1500, 2000)
 
-            # Recargamos la página para limpiar resultados anteriores
+            # Recargamos la pÃ¡gina para limpiar resultados anteriores
             await self.page.reload(wait_until="domcontentloaded")
             await BrowserManager.human_delay(1000, 1500)
 
             filter_ok = await self._select_email_filter()
             if not filter_ok:
-                logger.warning("⚠️  No se pudo confirmar filtro Email; se intentará buscar de todas formas")
+                logger.warning("âš ï¸  No se pudo confirmar filtro Email; se intentarÃ¡ buscar de todas formas")
 
             search_input = await self._find_search_input()
             if not search_input:
-                logger.warning("⚠️  No se encontró campo de búsqueda")
+                logger.warning("âš ï¸  No se encontrÃ³ campo de bÃºsqueda")
                 return False
 
             # Limpiamos el campo y escribimos el email
@@ -311,7 +311,7 @@ class InConcertScraper:
 
             # Enter suele ejecutar la busqueda en este componente.
             await self.page.keyboard.press("Enter")
-            logger.debug("✅ Enter ejecutado en campo de búsqueda")
+            logger.debug("âœ… Enter ejecutado en campo de bÃºsqueda")
             await BrowserManager.human_delay(1200, 1600)
 
             # Fallback: click en lupa/boton asociado al mismo bloque del input.
@@ -320,11 +320,11 @@ class InConcertScraper:
             # Esperamos a que carguen los resultados
             await BrowserManager.human_delay(2000, 3000)
 
-            # Verificamos si apareció algún resultado
+            # Verificamos si apareciÃ³ algÃºn resultado
             return await self._has_results()
 
         except Exception as e:
-            logger.error(f"❌ Error en búsqueda: {e}")
+            logger.error(f"âŒ Error en bÃºsqueda: {e}")
             return False
 
     async def _select_email_filter(self) -> bool:
@@ -339,7 +339,7 @@ class InConcertScraper:
                     await email_option.first.click(force=True)
                     await BrowserManager.human_delay(500, 800)
                     if await self._basic_filter_shows_email():
-                        logger.debug("✅ Filtro Email seleccionado desde dropdown Nombre")
+                        logger.debug("âœ… Filtro Email seleccionado desde dropdown Nombre")
                         return True
         except Exception as e:
             logger.debug(f"No se pudo seleccionar Email desde dropdown Nombre: {e}")
@@ -377,7 +377,7 @@ class InConcertScraper:
                 """
             )
             if selected:
-                logger.debug("✅ Filtro Email seleccionado por select nativo")
+                logger.debug("âœ… Filtro Email seleccionado por select nativo")
                 await BrowserManager.human_delay(500, 800)
                 return True
         except Exception:
@@ -399,7 +399,7 @@ class InConcertScraper:
                         option = self.page.get_by_text("Email", exact=True)
                         if await option.count() > 0:
                             await option.first.click(force=True)
-                            logger.debug("✅ Filtro Email seleccionado por dropdown custom")
+                            logger.debug("âœ… Filtro Email seleccionado por dropdown custom")
                             return True
                 except Exception:
                     continue
@@ -425,7 +425,7 @@ class InConcertScraper:
                         await item.click(force=True)
                         await BrowserManager.human_delay(300, 500)
                         if await self.page.get_by_text("Email", exact=True).count() > 0:
-                            logger.debug("✅ Dropdown de filtro basico abierto desde Nombre")
+                            logger.debug("âœ… Dropdown de filtro basico abierto desde Nombre")
                             return True
                 except Exception:
                     continue
@@ -553,30 +553,30 @@ class InConcertScraper:
                 """
             )
             if clicked:
-                logger.debug("✅ Click en lupa/botón cercano al campo de búsqueda")
+                logger.debug("âœ… Click en lupa/botÃ³n cercano al campo de bÃºsqueda")
         except Exception as e:
             logger.debug(f"No se pudo hacer click en lupa cercana: {e}")
 
     async def _has_results(self) -> bool:
         """
-        Verifica si la búsqueda retornó algún resultado.
+        Verifica si la bÃºsqueda retornÃ³ algÃºn resultado.
         InConcert muestra "De 0 resultados totales" cuando no hay resultados
-        y "De 1 resultados totales" cuando sí hay.
+        y "De 1 resultados totales" cuando sÃ­ hay.
 
         Retorna:
             True si hay al menos 1 resultado
             False si no hay resultados
         """
         try:
-            # Buscamos el texto que indica el número de resultados
+            # Buscamos el texto que indica el nÃºmero de resultados
             page_content = await self.page.content()
 
-            # Si el texto dice "0 resultados", no hay lead todavía
+            # Si el texto dice "0 resultados", no hay lead todavÃ­a
             if "De 0 resultados" in page_content or "0 resultados totales" in page_content:
-                logger.debug("📭 0 resultados — lead aún no llegó")
+                logger.debug("ðŸ“­ 0 resultados â€” lead aÃºn no llegÃ³")
                 return False
 
-            # Si hay una fila en la tabla de resultados, el lead llegó
+            # Si hay una fila en la tabla de resultados, el lead llegÃ³
             result_row_selectors = [
                 "table tbody tr",
                 ".contact-row",
@@ -588,7 +588,7 @@ class InConcertScraper:
                 try:
                     rows = await self.page.query_selector_all(selector)
                     if rows and len(rows) > 0:
-                        logger.debug(f"📬 {len(rows)} resultado(s) encontrado(s)")
+                        logger.debug(f"ðŸ“¬ {len(rows)} resultado(s) encontrado(s)")
                         return True
                 except Exception:
                     continue
@@ -596,7 +596,7 @@ class InConcertScraper:
             return False
 
         except Exception as e:
-            logger.error(f"❌ Error verificando resultados: {e}")
+            logger.error(f"âŒ Error verificando resultados: {e}")
             return False
 
     async def open_lead_detail(self) -> bool:
@@ -949,7 +949,7 @@ class InConcertScraper:
                     const candidates = Array.from(document.querySelectorAll('aside, section, main, div'))
                         .filter(visible)
                         .map((el) => ({ el, box: el.getBoundingClientRect(), text: normalize(el.textContent || '') }))
-                        .filter(({ box }) => box.left < viewportWidth * 0.36 && box.width < viewportWidth * 0.45)
+                        .filter(({ box }) => box.left < viewportWidth * 0.28 && box.width < viewportWidth * 0.32)
                         .filter(({ text }) =>
                             text.includes('contacto') && (
                                 text.includes('nivel de programa')
@@ -958,8 +958,11 @@ class InConcertScraper:
                                 || text.includes('zona regional')
                                 || text.includes('nivel de programa')
                                 || text.includes('area de interes')
-                                || text.includes('telefono')
-                                || text.includes('correo')
+                                || text.includes('cantidad de conversiones')
+                                || text.includes('categoria de interes')
+                                || text.includes('categoria_de_interes')
+                                || text.includes('clasificacion_programa')
+                                || text.includes('fecha_ingreso_cluster_lead')
                             )
                         )
                         .sort((a, b) => {
@@ -998,7 +1001,7 @@ class InConcertScraper:
                     const panels = Array.from(document.querySelectorAll('aside, section, main, div'))
                         .filter(visible)
                         .map((el) => ({ el, box: el.getBoundingClientRect() }))
-                        .filter(({ box }) => box.left < viewportWidth * 0.36 && box.width < viewportWidth * 0.45)
+                        .filter(({ box }) => box.left < viewportWidth * 0.28 && box.width < viewportWidth * 0.32)
                         .filter(({ el }) => /informacion|contacto|campos siu|historial/i.test(el.textContent || ''))
                         .sort((a, b) => {
                             const aScrollable = a.el.scrollHeight > a.el.clientHeight + 20 ? 0 : 1;
@@ -1043,7 +1046,7 @@ class InConcertScraper:
                         .filter((el) => {
                             if (!visible(el)) return false;
                             const box = el.getBoundingClientRect();
-                            return box.left < viewportWidth * 0.36 && normalize(el.textContent) === 'contacto';
+                            return box.left < viewportWidth * 0.28 && normalize(el.textContent) === 'contacto';
                         })
                         .sort((a, b) => {
                             const ar = a.getBoundingClientRect();
@@ -1110,8 +1113,11 @@ class InConcertScraper:
                                 || text.includes('programa de interes')
                         || text.includes('tipo de programa')
                         || text.includes('zona regional')
-                        || text.includes('telefono')
-                        || text.includes('correo');
+                        || text.includes('cantidad de conversiones')
+                        || text.includes('categoria de interes')
+                        || text.includes('categoria_de_interes')
+                        || text.includes('clasificacion_programa')
+                        || text.includes('fecha_ingreso_cluster_lead');
                 }
                 """,
                 panel,
@@ -1394,8 +1400,10 @@ class InConcertScraper:
 
     def cancel(self) -> None:
         """
-        Cancela el proceso de búsqueda.
+        Cancela el proceso de bÃºsqueda.
         Se llama cuando el usuario presiona "Detener" en la interfaz.
         """
         self._cancelled = True
-        logger.info("🛑 InConcertScraper: cancelación solicitada")
+        logger.info("ðŸ›‘ InConcertScraper: cancelaciÃ³n solicitada")
+
+

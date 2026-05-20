@@ -1,12 +1,11 @@
-# ============================================================
-# config/countries.py
-# Configuración de cada país: URL de InConcert, datos ficticios,
-# equivalencias de niveles y mapeo con columnas del Sheets
-# Equivalente a un archivo de constantes o @ConfigurationProperties en Spring
-# ============================================================
+"""Configuracion especifica por pais.
 
-from dataclasses import dataclass, field  # Para crear clases de datos simples
-from typing import Optional, Dict, List    # Para tipos de datos
+Cada Country define URL de InConcert, datos ficticios locales, formato telefonico y equivalencias de nivel academico.
+Esto evita repartir condicionales por pais dentro de los servicios de automatizacion.
+"""
+
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List
 
 
 @dataclass
@@ -17,46 +16,29 @@ class Country:
     una clase simple que solo guarda datos, sin lógica compleja.
     """
 
-    # Identificador interno del país (ej: "mexico", "colombia")
     id: str
 
-    # Nombre como aparece en la columna B del Sheets
-    # Puede haber variantes (ej: "Mexico", "México")
     sheet_names: List[str]
 
-    # URL del CRM InConcert para este país
     inconcert_url: str
 
-    # Nombre ficticio para llenar el formulario
     fake_name: str
 
-    # Teléfono ficticio con formato local del país
-    # ⚠️ CRÍTICO: debe ser formato del país o el lead no llega a InConcert
     fake_phone: str
 
-    # Prefijo telefónico del país (ej: "+52" para México)
     phone_prefix: str
 
-    # Fecha de nacimiento ficticia — igual para todos los países
     fake_birthdate: str = "01/01/1990"
 
-    # Equivalencias de niveles académicos para este país
-    # Por ejemplo en Chile: Maestría = Magister, Licenciatura = Carrera
-    # Si un país no tiene equivalencias especiales, este diccionario está vacío
     level_equivalences: Dict[str, str] = field(default_factory=dict)
 
-    # Provincia/Estado ficticio (algunos formularios lo piden)
     fake_province: Optional[str] = None
 
 
-# ============================================================
-# LISTA DE TODOS LOS PAÍSES CON SU CONFIGURACIÓN
-# ============================================================
 
 COUNTRIES = [
     Country(
         id="mexico",
-        # El Sheets usa tanto "Mexico" como "México" (con tilde)
         sheet_names=["Mexico", "México"],
         inconcert_url="https://mas-utel.inconcertcc.com/mas/home",
         fake_name="Juan Pérez",
@@ -118,7 +100,6 @@ COUNTRIES = [
         phone_prefix="+591",
         fake_province="La Paz",
     ),
-    # ---- PAÍSES DE EMERGENTES (todos usan la misma URL de InConcert) ----
     Country(
         id="usa",
         sheet_names=["USA"],
@@ -136,8 +117,6 @@ COUNTRIES = [
         fake_phone="912345678",
         phone_prefix="+56",
         fake_province="Región Metropolitana",
-        # ⚠️ En Chile los niveles tienen nombres diferentes:
-        # Maestría se llama Magister y Licenciatura se llama Carrera
         level_equivalences={
             "Maestría": "Magister",
             "Maestria": "Magister",
@@ -184,7 +163,6 @@ COUNTRIES = [
         fake_phone="41234567",
         phone_prefix="+502",
     ),
-    # ---- GLOBAL (Singapur) — incluye Filipinas, India, Vietnam, Indonesia ----
     Country(
         id="global",
         sheet_names=["Global"],
@@ -196,9 +174,6 @@ COUNTRIES = [
     ),
 ]
 
-# ============================================================
-# FUNCIÓN AUXILIAR PARA BUSCAR UN PAÍS POR SU NOMBRE
-# ============================================================
 
 def get_country(sheet_name: str) -> Optional[Country]:
     """
@@ -211,17 +186,12 @@ def get_country(sheet_name: str) -> Optional[Country]:
 
     Retorna None si el país no se encuentra en la lista.
     """
-    # Normalizamos el nombre: quitamos espacios extra y ponemos en minúsculas
-    # para que la búsqueda no falle por mayúsculas o espacios
     name_clean = sheet_name.strip()
 
-    # Recorremos todos los países y buscamos cuál tiene ese nombre
     for country in COUNTRIES:
-        # Verificamos si el nombre está en la lista de nombres del país
         if name_clean in country.sheet_names:
             return country
 
-    # Si no encontramos el país, mostramos una advertencia
     from loguru import logger
     logger.warning(f"⚠️  País no encontrado en configuración: '{sheet_name}'")
     return None
@@ -235,11 +205,8 @@ def get_level_name(country: Country, level: str) -> str:
         En México: get_level_name(mexico, "Maestría") → "Maestría" (sin cambio)
     """
     if not level:
-        # Si no hay nivel especificado, retornamos cadena vacía
         return ""
 
-    # Buscamos si hay equivalencia para este nivel en este país
-    # Si no hay equivalencia, usamos el nombre original
     return country.level_equivalences.get(level, level)
 
 
@@ -253,10 +220,8 @@ def infer_level_from_url(url: str) -> Optional[str]:
         ".../licenciaturas-executive" → "Licenciatura"
         ".../doctorados" → "Doctorado"
     """
-    # Convertimos la URL a minúsculas para comparar sin problemas
     url_lower = url.lower()
 
-    # Revisamos qué palabra clave contiene la URL
     if "maestria" in url_lower or "maestrias" in url_lower or "posgrado" in url_lower:
         return "Maestría"
     elif "licenciatura" in url_lower or "carrera" in url_lower:
@@ -274,5 +239,4 @@ def infer_level_from_url(url: str) -> Optional[str]:
     elif "master" in url_lower or "magister" in url_lower:
         return "Master"
 
-    # Si no encontramos nada en la URL, retornamos None
     return None

@@ -1,13 +1,14 @@
 # ============================================================
 # automation/form_filler.py
 # Llena formularios UTEL sin cambiar el frontend del sistema.
-# Estrategia principal tomada del QA previo con Selenium:
-#   1. Ubicar form por ID segun Location: FooterBLC/LateralBLC/TarjetaBLC.
-#   2. Llenar dentro de ese form, nunca en toda la pagina.
-#   3. Respetar dependencias: modality -> area -> program -> contacto.
-#   4. Validar valores antes de enviar.
+# Estrategia:
+#   1. Usar Location para abrir el formulario correcto.
+#   2. Usar Nivel de Sheets como fuente principal del producto.
+#   3. Llenar dentro del form detectado, no en toda la pagina.
+#   4. Respetar dependencias: modality -> area -> program -> contacto.
 # ============================================================
 
+import unicodedata
 from typing import Optional
 
 from loguru import logger
@@ -25,16 +26,50 @@ FORM_IDS = {
 }
 
 PROGRAM_SEARCH_BY_LEVEL = {
-    "licenciatura": "Administracion",
-    "licenciaturas": "Administracion",
-    "licenciaturas hibridas": "Administracion",
-    "maestria": "Administracion",
-    "maestria ejecutiva": "Administracion",
-    "maestría": "Administracion",
-    "doctorado": "Gestion",
-    "diplomado": "Project",
-    "diplomados": "Project",
+    "licenciatura": "Licenciatura",
+    "licenciaturas": "Licenciatura",
+    "doctorado": "Doctorado",
+    "doctorados": "Doctorado",
+    "maestria": "Maestria",
+    "maestrias": "Maestria",
+    "maestria ejecutiva": "Maestria ejecutiva",
+    "maestrias ejecutivas": "Maestria ejecutiva",
+    "licenciatura hibrida": "Licenciatura hibrida",
+    "licenciaturas hibridas": "Licenciatura hibrida",
+    "bootcamp": "Bootcamp",
+    "bootcamps": "Bootcamp",
     "bachillerato": "Bachillerato",
+    "doble titulacion mex usa": "Doble titulacion",
+    "doble titulacion mexusa": "Doble titulacion",
+}
+
+LEVEL_ALIASES = {
+    "Licenciatura": ["Licenciatura", "Licenciaturas"],
+    "Doctorado": ["Doctorado", "Doctorados"],
+    "Maestria": ["Maestria", "Maestrias", "Maestría", "Maestrías", "Master", "Máster"],
+    "Maestrias ejecutivas": [
+        "Maestrias ejecutivas",
+        "Maestrías ejecutivas",
+        "Maestria ejecutiva",
+        "Maestría ejecutiva",
+    ],
+    "Licenciaturas hibridas": [
+        "Licenciaturas hibridas",
+        "Licenciaturas híbridas",
+        "Licenciatura hibrida",
+        "Licenciatura híbrida",
+        "Modalidad Hibrida",
+        "Modalidad Híbrida",
+    ],
+    "Bootcamps": ["Bootcamps", "Bootcamp"],
+    "Bachillerato": ["Bachillerato"],
+    "Doble titulacion Mex-USA": [
+        "Doble titulacion Mex-USA",
+        "Doble titulación Mex-USA",
+        "Doble titulacion",
+        "Doble titulación",
+        "Mex-USA",
+    ],
 }
 
 
@@ -52,9 +87,8 @@ class FormFiller:
         """Abre la LP, prepara el formulario correcto y lo envia."""
         try:
             self.form_type = self._normalize_form_type(lead.form_type)
-            level = get_level_name(self.country, lead.nivel or "")
-            if not level:
-                level = infer_level_from_url(lead.landing_url) or ""
+            raw_level = lead.nivel or infer_level_from_url(lead.landing_url) or ""
+            level = self._canonical_level(get_level_name(self.country, raw_level) or raw_level)
 
             logger.info(f"Abriendo LP: {lead.landing_url}")
             logger.info(f"Formulario: {self.form_type or 'formlp'} | nivel='{level}'")
@@ -72,7 +106,7 @@ class FormFiller:
             elif self.form_type == "footer":
                 await self._prepare_footer_flow()
             elif self.form_type in ["tarjeta", "targeta"]:
-                await self._prepare_tarjeta_flow(lead)
+                await self._prepare_tarjeta_flow(level)
             else:
                 logger.info("Form LP: se buscara formulario visible")
 
@@ -103,12 +137,32 @@ class FormFiller:
             return False
 
     def _normalize_form_type(self, form_type: str) -> str:
-        raw = (form_type or "").strip().lower().replace(" ", "")
+        raw = self._norm(form_type).replace(" ", "")
         if raw in ["formlp", "form"]:
             return "formlp"
         if raw in ["targeta", "tarjeta"]:
-            return raw
+            return "tarjeta"
         return raw
+
+    def _norm(self, value: str) -> str:
+        text = str(value or "").strip().lower()
+        text = unicodedata.normalize("NFD", text)
+        text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+        return "".join(ch for ch in text if ch.isalnum() or ch.isspace()).strip()
+
+    def _canonical_level(self, level: str) -> str:
+        raw = (level or "").strip()
+        normalized = self._norm(raw)
+        for canonical, aliases in LEVEL_ALIASES.items():
+            if normalized in {self._norm(alias) for alias in aliases}:
+                return canonical
+        return raw
+
+    def _level_preferences(self, level: str) -> list[str]:
+        canonical = self._canonical_level(level)
+        preferences = [level, canonical]
+        preferences.extend(LEVEL_ALIASES.get(canonical, []))
+        return list(dict.fromkeys([item for item in preferences if item]))
 
     async def _soft_wait_network(self) -> None:
         try:
@@ -125,31 +179,118 @@ class FormFiller:
     async def _prepare_lateral_flow(self, level: str) -> None:
         logger.info("Preparando flujo Lateral")
 
-        if await self._scroll_to_form_id("LateralBLC"):
+        opened = await self._open_lateral_cta()
+        if not opened:
+            logger.warning("Location=Lateral: no se pudo hacer click en Solicitar informacion")
             return
 
-        opened = await self._open_hamburger_menu()
-        if opened:
-            await self._click_menu_option(["En linea", "En línea", "Online"])
-            await self.page.wait_for_timeout(1000)
-            await self._click_menu_option([level, "Licenciaturas", "Licenciatura"])
-            await self._soft_wait_network()
-            await self.page.wait_for_timeout(2500)
-
-        if await self._scroll_to_form_id("LateralBLC"):
+        if await self._wait_for_lateral_panel():
             return
 
-        if await self._scroll_to_form_id("FooterBLC"):
-            return
+        logger.warning("Location=Lateral: se hizo click, pero no aparecio el panel lateral requerido")
 
-        await self._scroll_until_contact_form()
-
-    async def _prepare_tarjeta_flow(self, lead: LeadRow) -> None:
+    async def _prepare_tarjeta_flow(self, level: str) -> None:
         logger.info("Preparando flujo Tarjeta")
         if await self._scroll_to_form_id("TarjetaBLC"):
             return
-        await self._search_program_from_generic_page(lead)
+
+        await self._search_program_from_generic_page(level)
+        await self._soft_wait_network()
+        await self.page.wait_for_timeout(2500)
         await self._scroll_to_form_id("TarjetaBLC")
+
+    async def _open_lateral_cta(self) -> bool:
+        clicked = await self.page.evaluate(
+            """
+            () => {
+                const normalize = (value) => String(value || '')
+                    .normalize('NFD')
+                    .replace(/[\\u0300-\\u036f]/g, '')
+                    .toLowerCase()
+                    .trim();
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const box = el.getBoundingClientRect();
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && box.width > 0
+                        && box.height > 0;
+                };
+
+                const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                const candidates = Array.from(document.querySelectorAll('a, button, [role=button]'))
+                    .filter(visible)
+                    .map((el) => ({ el, box: el.getBoundingClientRect(), text: normalize(el.textContent) }))
+                    .filter(({ text }) => text.includes('solicitar informacion'))
+                    .sort((a, b) => {
+                        const aTopScore = a.box.top < 180 ? 0 : 1;
+                        const bTopScore = b.box.top < 180 ? 0 : 1;
+                        if (aTopScore !== bTopScore) return aTopScore - bTopScore;
+                        return Math.abs(viewportWidth - a.box.right) - Math.abs(viewportWidth - b.box.right);
+                    });
+
+                const target = candidates[0]?.el;
+                if (!target) return false;
+                target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                target.click();
+                return true;
+            }
+            """
+        )
+
+        if clicked:
+            await self.page.wait_for_timeout(1800)
+            logger.info("Click ejecutado en CTA visible 'Solicitar informacion'")
+            return True
+
+        logger.warning("No se encontro CTA 'Solicitar informacion' para formulario lateral")
+        return False
+
+    async def _wait_for_lateral_panel(self, timeout_ms: int = 7000) -> bool:
+        attempts = max(int(timeout_ms / 350), 1)
+        for _ in range(attempts):
+            if await self._scroll_to_form_id("LateralBLC"):
+                return True
+            if await self._lateral_panel_is_open():
+                return True
+            await self.page.wait_for_timeout(350)
+        return False
+
+    async def _lateral_panel_is_open(self) -> bool:
+        try:
+            return await self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const box = el.getBoundingClientRect();
+                        return style.display !== 'none'
+                            && style.visibility !== 'hidden'
+                            && box.width > 0
+                            && box.height > 0;
+                    };
+                    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                    const candidates = Array.from(document.querySelectorAll('aside, section, form, div'))
+                        .filter(visible)
+                        .map((el) => ({ el, box: el.getBoundingClientRect(), text: el.textContent || '' }))
+                        .filter(({ box }) => box.left > viewportWidth * 0.55 || box.right > viewportWidth * 0.85)
+                        .filter(({ text }) => /tu meta esta cerca|tu meta está cerca|completa el formulario|modalidad|area de interes|área de interés/i.test(text));
+
+                    return candidates.some(({ el }) => {
+                        const fields = Array.from(el.querySelectorAll('input, select, textarea')).filter(visible);
+                        const keys = fields.map((field) =>
+                            `${field.name || ''} ${field.id || ''} ${field.placeholder || ''}`.toLowerCase()
+                        );
+                        return keys.some((x) => x.includes('email') || x.includes('correo'))
+                            && keys.some((x) => x.includes('phone') || x.includes('tel'))
+                            && keys.some((x) => x.includes('name') || x.includes('nombre'));
+                    });
+                }
+                """
+            )
+        except Exception as e:
+            logger.debug(f"No se pudo detectar panel lateral: {e}")
+            return False
 
     async def _open_hamburger_menu(self) -> bool:
         selectors = [
@@ -209,13 +350,13 @@ class FormFiller:
                     continue
         return False
 
-    async def _search_program_from_generic_page(self, lead: LeadRow) -> None:
-        level = get_level_name(self.country, lead.nivel or "Licenciatura")
+    async def _search_program_from_generic_page(self, level: str) -> None:
         query = self._program_query(level)
         searchers = [
             self.page.get_by_placeholder("Buscar programa"),
             self.page.get_by_role("searchbox"),
             self.page.locator("input[type='search']:visible"),
+            self.page.locator("input[placeholder*='programa' i]:visible"),
         ]
 
         for field in searchers:
@@ -225,14 +366,57 @@ class FormFiller:
                 await field.first.click(force=True, timeout=3000)
                 await field.first.fill(query, force=True, timeout=3000)
                 await self.page.wait_for_timeout(1500)
-                await self.page.keyboard.press("ArrowDown")
-                await self.page.keyboard.press("Enter")
-                await self._soft_wait_network()
-                await self.page.wait_for_timeout(2000)
+                clicked = await self._click_search_result_for_level(level)
+                if not clicked:
+                    await self.page.keyboard.press("ArrowDown")
+                    await self.page.keyboard.press("Enter")
                 logger.info(f"Busqueda de tarjeta usada: '{query}'")
                 return
-            except Exception:
-                continue
+            except Exception as e:
+                logger.debug(f"Buscador no usable para tarjeta: {e}")
+
+        logger.warning("No se pudo usar el buscador global para flujo Tarjeta")
+
+    async def _click_search_result_for_level(self, level: str) -> bool:
+        terms = self._level_preferences(level)
+        try:
+            clicked = await self.page.evaluate(
+                """
+                (terms) => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\\u0300-\\u036f]/g, '')
+                        .toLowerCase()
+                        .trim();
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const box = el.getBoundingClientRect();
+                        return style.display !== 'none'
+                            && style.visibility !== 'hidden'
+                            && box.width > 0
+                            && box.height > 0;
+                    };
+                    const wanted = terms.map(normalize).filter(Boolean);
+                    const candidates = Array.from(document.querySelectorAll(
+                        'a, button, [role=option], [role=menuitem], li, div'
+                    )).filter(visible);
+                    const result = candidates.find((el) => {
+                        const text = normalize(el.textContent);
+                        return text && wanted.some((term) => text.includes(term));
+                    });
+                    if (!result) return false;
+                    result.click();
+                    return true;
+                }
+                """,
+                terms,
+            )
+            if clicked:
+                logger.info(f"Resultado de tarjeta seleccionado para nivel '{level}'")
+            return bool(clicked)
+        except Exception as e:
+            logger.debug(f"No se pudo seleccionar resultado de tarjeta: {e}")
+            return False
 
     async def _scroll_to_form_id(self, form_id: str) -> bool:
         locator = self.page.locator(f"#{form_id}")
@@ -281,6 +465,23 @@ class FormFiller:
         )
 
     async def _find_form_scope(self, form_type: str) -> Optional[Locator]:
+        if form_type == "lateral":
+            lateral = self.page.locator("#LateralBLC")
+            try:
+                if await lateral.count() > 0 and await lateral.first.is_visible():
+                    logger.info("Usando formulario #LateralBLC")
+                    return lateral.first
+            except Exception:
+                pass
+
+            lateral_panel = await self._find_lateral_panel_scope()
+            if lateral_panel:
+                logger.info("Usando panel lateral visible como scope de formulario")
+                return lateral_panel
+
+            logger.warning("Location=Lateral, pero no se encontro formulario/panel lateral usable")
+            return None
+
         preferred_ids = []
         mapped = FORM_IDS.get(form_type)
         if mapped:
@@ -315,6 +516,47 @@ class FormFiller:
         logger.warning("Fallback a body como scope de formulario")
         return body
 
+    async def _find_lateral_panel_scope(self) -> Optional[Locator]:
+        panels = self.page.locator("aside:visible, section:visible, form:visible, div:visible")
+        count = await panels.count()
+        for i in range(count):
+            panel = panels.nth(i)
+            try:
+                score = await panel.evaluate(
+                    """
+                    (el) => {
+                        const visible = (node) => {
+                            const style = window.getComputedStyle(node);
+                            const box = node.getBoundingClientRect();
+                            return style.display !== 'none'
+                                && style.visibility !== 'hidden'
+                                && box.width > 0
+                                && box.height > 0;
+                        };
+                        const box = el.getBoundingClientRect();
+                        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                        if (box.left < viewportWidth * 0.50 && box.right < viewportWidth * 0.85) return 0;
+
+                        const text = String(el.textContent || '').toLowerCase();
+                        let score = /tu meta est|completa el formulario|modalidad|area de interes|área de interés/.test(text) ? 5 : 0;
+                        const fields = Array.from(el.querySelectorAll('input, select, textarea')).filter(visible);
+                        const keys = fields.map((field) =>
+                            `${field.name || ''} ${field.id || ''} ${field.placeholder || ''}`.toLowerCase()
+                        );
+                        if (keys.some((x) => x.includes('email') || x.includes('correo'))) score += 4;
+                        if (keys.some((x) => x.includes('phone') || x.includes('tel'))) score += 4;
+                        if (keys.some((x) => x.includes('name') || x.includes('nombre'))) score += 3;
+                        if (keys.some((x) => x.includes('modality') || x.includes('area') || x.includes('program'))) score += 2;
+                        return score;
+                    }
+                    """
+                )
+                if score >= 12:
+                    return panel
+            except Exception:
+                continue
+        return None
+
     async def _score_form(self, form: Locator) -> int:
         try:
             return await form.evaluate(
@@ -346,13 +588,23 @@ class FormFiller:
     async def _fill_form(self, test_email: str, level: str) -> bool:
         logger.info("Llenando formulario en orden dependiente")
 
-        await self._select_field("modality", preferred=[level, "En linea", "En línea", "Online"])
+        level_preferences = self._level_preferences(level)
+
+        await self._select_field("modality", preferred=["En linea", "En línea", "Online"])
         await self.page.wait_for_timeout(4000)
 
-        await self._select_field("area", preferred=[level])
+        area_exists = await self._select_exists("area")
+        area_ok = await self._select_field(
+            "area",
+            preferred=level_preferences,
+            require_preferred_match=True,
+        )
+        if area_exists and not area_ok:
+            logger.warning(f"No se pudo seleccionar el nivel requerido en Area: {level}")
+            return False
         await self.page.wait_for_timeout(4000)
 
-        await self._fill_program(level)
+        await self._fill_program(level, level_preferences)
         await self.page.wait_for_timeout(1200)
 
         await self._set_input(["#first_name", "input[name='first_name']", "input[name='name']"], self.country.fake_name, "nombre")
@@ -377,7 +629,16 @@ class FormFiller:
 
         return True
 
-    async def _select_field(self, field_name: str, preferred: list[str]) -> bool:
+    async def _select_exists(self, field_name: str) -> bool:
+        select = self._scope().locator(f"select[name='{field_name}'], select#{field_name}, select[id*='{field_name}' i]")
+        return await select.count() > 0
+
+    async def _select_field(
+        self,
+        field_name: str,
+        preferred: list[str],
+        require_preferred_match: bool = False,
+    ) -> bool:
         select = self._scope().locator(f"select[name='{field_name}'], select#{field_name}, select[id*='{field_name}' i]")
         if await select.count() == 0:
             logger.info(f"Select {field_name} no existe en este formulario")
@@ -387,7 +648,8 @@ class FormFiller:
         await self._wait_select_real_options(locator, field_name)
         chosen = await locator.evaluate(
             """
-            (select, preferred) => {
+            (select, payload) => {
+                const { preferred, requirePreferredMatch } = payload;
                 const bad = new Set(['', '-', '--', 'seleccionar', 'selecciona', 'select', 'choose']);
                 const clean = (s) => String(s || '').trim();
                 const norm = (s) => clean(s).toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
@@ -408,33 +670,51 @@ class FormFiller:
                 if (!options.length) return null;
 
                 let chosen = null;
+                let matched = false;
                 for (const wantedRaw of preferred || []) {
                     const wanted = norm(wantedRaw);
                     if (!wanted) continue;
                     chosen = options.find((option) => {
                         const text = norm(option.text);
                         const value = norm(option.value);
+                        return text === wanted || value === wanted;
+                    });
+                    if (chosen) {
+                        matched = true;
+                        break;
+                    }
+                    chosen = options.find((option) => {
+                        const text = norm(option.text);
+                        const value = norm(option.value);
                         return text.includes(wanted) || value.includes(wanted) || wanted.includes(text);
                     });
-                    if (chosen) break;
+                    if (chosen) {
+                        matched = true;
+                        break;
+                    }
                 }
+
+                if (requirePreferredMatch && !matched) return null;
                 chosen = chosen || options[0];
                 select.selectedIndex = chosen.index;
                 select.value = chosen.value;
                 select.dispatchEvent(new Event('input', { bubbles: true }));
                 select.dispatchEvent(new Event('change', { bubbles: true }));
                 select.dispatchEvent(new Event('blur', { bubbles: true }));
-                return chosen;
+                return { ...chosen, matched };
             }
             """,
-            preferred,
+            {
+                "preferred": preferred,
+                "requirePreferredMatch": require_preferred_match,
+            },
         )
 
         if chosen:
             logger.info(f"Select {field_name}: {chosen}")
             return True
 
-        logger.warning(f"Select {field_name} sin opciones reales")
+        logger.warning(f"Select {field_name} sin opcion compatible con {preferred}")
         return False
 
     async def _wait_select_real_options(self, select: Locator, field_name: str, timeout_ms: int = 10000) -> None:
@@ -459,8 +739,11 @@ class FormFiller:
         except Exception:
             logger.debug(f"Select {field_name}: no se confirmaron opciones dinamicas en espera")
 
-    async def _fill_program(self, level: str) -> bool:
-        select_done = await self._select_field("program", preferred=[level, self._program_query(level)])
+    async def _fill_program(self, level: str, level_preferences: list[str]) -> bool:
+        select_done = await self._select_field(
+            "program",
+            preferred=[*level_preferences, self._program_query(level)],
+        )
         if select_done:
             return True
 
@@ -486,8 +769,8 @@ class FormFiller:
             return True
 
     def _program_query(self, level: str) -> str:
-        key = (level or "").strip().lower()
-        return PROGRAM_SEARCH_BY_LEVEL.get(key, "Administracion")
+        key = self._norm(level)
+        return PROGRAM_SEARCH_BY_LEVEL.get(key, level or "Licenciatura")
 
     async def _set_input(self, selectors: list[str], value: str, label: str) -> bool:
         field = await self._first_existing(selectors)
@@ -534,6 +817,9 @@ class FormFiller:
     async def _check_privacy(self) -> bool:
         candidates = [
             self._scope().locator("input[type='checkbox']"),
+            self._scope().locator("label:has-text('Política de Privacidad')"),
+            self._scope().locator("label:has-text('Politica de Privacidad')"),
+            self._scope().locator("label:has-text('Privacidad')"),
             self._scope().locator(".chakra-checkbox__control"),
             self._scope().locator("[class*='checkbox']"),
         ]
@@ -545,13 +831,56 @@ class FormFiller:
                 try:
                     await item.scroll_into_view_if_needed(timeout=3000)
                     await item.click(force=True, timeout=3000)
-                    logger.info("Checkbox privacidad marcado")
-                    return True
+                    if await self._privacy_is_checked():
+                        logger.info("Checkbox privacidad marcado")
+                        return True
                 except Exception:
                     continue
 
+        try:
+            checked = await self._scope().evaluate(
+                """
+                (root) => {
+                    const checkbox = Array.from(root.querySelectorAll("input[type='checkbox']"))[0];
+                    if (checkbox) {
+                        checkbox.checked = true;
+                        checkbox.setAttribute('checked', 'checked');
+                        checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+                        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                        checkbox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                        if (!checkbox.checked) checkbox.checked = true;
+                        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                        return checkbox.checked;
+                    }
+                    const target = Array.from(root.querySelectorAll('label, span, div, p'))
+                        .find((el) => /privacidad|politica|política/i.test(el.textContent || ''));
+                    if (!target) return false;
+                    target.click();
+                    return true;
+                }
+                """
+            )
+            if checked:
+                logger.info("Checkbox privacidad marcado por DOM")
+                return True
+        except Exception as e:
+            logger.debug(f"Checkbox privacidad por DOM fallo: {e}")
+
         logger.warning("Checkbox privacidad no encontrado")
         return False
+
+    async def _privacy_is_checked(self) -> bool:
+        try:
+            return await self._scope().evaluate(
+                """
+                (root) => {
+                    const checkbox = root.querySelector("input[type='checkbox']");
+                    return checkbox ? Boolean(checkbox.checked) : true;
+                }
+                """
+            )
+        except Exception:
+            return False
 
     async def _submit_form(self) -> bool:
         buttons = [
@@ -560,6 +889,8 @@ class FormFiller:
             "button:has-text('Calcula tu beca')",
             "button:has-text('Enviar información')",
             "button:has-text('Enviar informacion')",
+            "button:has-text('Continua por Whatsapp')",
+            "button:has-text('Continúa por Whatsapp')",
             "button:has-text('Solicitar información')",
             "button:has-text('Solicitar informacion')",
             "button:has-text('Enviar')",

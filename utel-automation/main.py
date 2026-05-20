@@ -1,64 +1,48 @@
-# ============================================================
-# main.py
-# Punto de entrada de la aplicación FastAPI
-# Define todas las rutas HTTP y el stream SSE
-# Equivalente al @RestController + @SpringBootApplication en Spring Boot
-# ============================================================
+"""Punto de entrada FastAPI de UTEL Automation.
 
-# ⚠️  FIX CRÍTICO PARA WINDOWS:
-# En Windows, asyncio usa por defecto SelectorEventLoop que NO soporta
-# subprocesos (subprocess) — y Playwright necesita subprocesos para lanzar Chromium.
-# ProactorEventLoop sí soporta subprocesos en Windows.
-# En Linux/Mac esto no es necesario.
+Mapa mental si vienes de Spring Boot:
+- Este archivo equivale a una clase @SpringBootApplication junto con un @RestController.
+- Las instancias globales funcionan como beans singleton creados al iniciar la app.
+- /api/run dispara el proceso en background para no bloquear la respuesta HTTP.
+- /api/stream expone eventos SSE para actualizar la interfaz en tiempo real, parecido al uso simple de un WebSocket de progreso.
+"""
+
 import sys
 import asyncio
 
 if sys.platform == "win32":
-    # Cambiamos el event loop a ProactorEventLoop ANTES de que arranque FastAPI
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
-import asyncio                                  # Para tareas en background
-from contextlib import asynccontextmanager      # Para el ciclo de vida de la app
-from typing import Optional                     # Para tipos opcionales
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, BackgroundTasks, Request, Form
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles     # Para servir archivos CSS
-from fastapi.templating import Jinja2Templates  # Para renderizar HTML
-from loguru import logger                       # Para logs
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from loguru import logger
 
-from config.settings import settings            # Configuración del sistema
-from config.models import RunRequest            # Modelo de la solicitud
-from sheets.reader import SheetsReader          # Lee el Sheets
-from sheets.writer import SheetsWriter          # Escribe en el Sheets
-from automation.screenshot import ScreenshotManager  # Capturas y Drive
-from events.queue import EventQueue             # Cola de eventos SSE
-from orchestrator import Orchestrator           # Coordinador central
+from config.settings import settings
+from config.models import RunRequest
+from sheets.reader import SheetsReader
+from sheets.writer import SheetsWriter
+from automation.screenshot import ScreenshotManager
+from events.queue import EventQueue
+from orchestrator import Orchestrator
 
 
-# ============================================================
-# INICIALIZACIÓN DE SERVICIOS
-# Equivalente a los @Bean de Spring Boot — se crean una sola vez
-# ============================================================
 
-# Cola de eventos global — conecta el Orchestrator con el stream SSE
 event_queue = EventQueue()
 
-# Instancias de los servicios — se crean una sola vez al iniciar
-# Equivalente a @Autowired Singleton en Spring
 sheets_reader = SheetsReader()
 sheets_writer = SheetsWriter()
 screenshot_manager = ScreenshotManager()
 
-# Referencia al orchestrator activo (None si no hay proceso corriendo)
 active_orchestrator: Optional[Orchestrator] = None
 
 
-# ============================================================
-# CICLO DE VIDA DE LA APLICACIÓN
-# Equivalente a @PostConstruct y @PreDestroy en Spring Boot
-# ============================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -67,20 +51,14 @@ async def lifespan(app: FastAPI):
     El código antes del 'yield' se ejecuta al arrancar.
     El código después del 'yield' se ejecuta al cerrar.
     """
-    # Al iniciar: mostramos mensaje de bienvenida
     logger.info("🚀 UTEL Automation iniciado")
     logger.info(f"🌐 Interfaz disponible en: http://localhost:{settings.port}")
 
-    yield  # La aplicación corre entre estos dos puntos
+    yield
 
-    # Al cerrar: limpiamos recursos
     logger.info("🔒 UTEL Automation cerrando...")
 
 
-# ============================================================
-# CREACIÓN DE LA APP FASTAPI
-# Equivalente a @SpringBootApplication en Spring Boot
-# ============================================================
 
 app = FastAPI(
     title="UTEL Lead Tester",
@@ -89,18 +67,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Servimos los archivos estáticos (CSS) desde la carpeta /static
-# Equivalente a configurar un ResourceHandler en Spring MVC
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Configuramos el motor de templates Jinja2 para renderizar HTML
-# Equivalente a un ViewResolver en Spring MVC
 templates = Jinja2Templates(directory="templates")
 
 
-# ============================================================
-# RUTAS HTTP — Equivalente a @GetMapping y @PostMapping en Spring
-# ============================================================
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -110,20 +81,17 @@ async def index(request: Request):
 
     Renderiza el archivo templates/index.html con los países disponibles.
     """
-    # Lista de países disponibles para el dropdown de la UI
     countries = [
         "Mexico", "Peru", "Colombia", "Ecuador", "Argentina",
         "Bolivia", "Chile", "USA", "Dominicana", "Paraguay",
         "Guatemala", "El Salvador", "Honduras", "Panama", "Global"
     ]
 
-    # Renderizamos el template HTML pasando los datos necesarios
-    # Equivalente a un ModelAndView en Spring MVC
     return templates.TemplateResponse(
         "index.html",
         {
-            "request": request,       # FastAPI requiere siempre pasar el request
-            "countries": countries,   # Lista de países para el dropdown
+            "request": request,
+            "countries": countries,
             "title": "UTEL Lead Tester"
         }
     )
@@ -131,10 +99,10 @@ async def index(request: Request):
 
 @app.post("/api/run")
 async def run_test(
-    background_tasks: BackgroundTasks,  # Para ejecutar en background
-    country: str = Form(...),           # País seleccionado en la UI
-    sheet_id: str = Form(""),           # ID del Sheets (opcional)
-    sheet_tab: str = Form(""),          # Hoja del Sheets (opcional)
+    background_tasks: BackgroundTasks,
+    country: str = Form(...),
+    sheet_id: str = Form(""),
+    sheet_tab: str = Form(""),
 ):
     """
     Inicia el proceso de testing para un país.
@@ -145,23 +113,18 @@ async def run_test(
     """
     global active_orchestrator, event_queue
 
-    # Si hay un proceso activo, lo cancelamos primero
     if active_orchestrator:
         active_orchestrator.cancel()
-        await asyncio.sleep(1)  # Pequeña pausa para que cancele
+        await asyncio.sleep(1)
 
-    # Reseteamos la cola de eventos para esta nueva ejecución
     event_queue.reset()
 
-    # Creamos la solicitud de ejecución
     request = RunRequest(
         country=country,
         sheet_id=sheet_id if sheet_id else None,
         sheet_tab=sheet_tab if sheet_tab else None
     )
 
-    # Creamos el Orchestrator con todas las dependencias inyectadas
-    # Equivalente a @Autowired en Spring — le pasamos los servicios
     active_orchestrator = Orchestrator(
         sheets_reader=sheets_reader,
         sheets_writer=sheets_writer,
@@ -171,32 +134,23 @@ async def run_test(
 
     logger.info(f"▶️  Iniciando proceso para {country}")
 
-    # ⚠️  FIX WINDOWS: Ejecutamos Playwright en un thread separado con su propio event loop
-    # background_tasks de FastAPI comparte el event loop de uvicorn
-    # que en Windows NO puede lanzar subprocesos (Playwright los necesita)
-    # La solución: correr el orchestrator en un ThreadPoolExecutor con loop propio
     import concurrent.futures
     import threading
 
     def run_in_new_loop():
         """Crea un event loop nuevo en un thread separado y corre el orchestrator"""
-        # Creamos un event loop nuevo — completamente independiente del de FastAPI
         loop = asyncio.new_event_loop()
-        # En Windows el loop nuevo también necesita ser ProactorEventLoop
         if sys.platform == "win32":
             loop = asyncio.ProactorEventLoop()
         asyncio.set_event_loop(loop)
         try:
-            # Corremos el orchestrator en este loop nuevo
             loop.run_until_complete(active_orchestrator.run(request))
         finally:
             loop.close()
 
-    # Lanzamos el thread — FastAPI sigue respondiendo normalmente
     thread = threading.Thread(target=run_in_new_loop, daemon=True)
     thread.start()
 
-    # Respondemos inmediatamente — el proceso corre en background
     return JSONResponse({
         "status": "started",
         "country": country,
@@ -222,22 +176,17 @@ async def stream_events(request: Request):
         Se ejecuta hasta que el proceso termina o el cliente se desconecta.
         """
         async for event in event_queue.consume():
-            # Verificamos si el cliente sigue conectado
             if await request.is_disconnected():
                 logger.info("📡 Cliente SSE desconectado")
                 break
             yield event
 
-    # StreamingResponse mantiene la conexión abierta
-    # media_type="text/event-stream" es el tipo MIME para SSE
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            # Evitamos que el servidor o proxies cacheen el stream
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            # Necesario para que funcione en algunos navegadores
             "X-Accel-Buffering": "no",
         }
     )
@@ -295,21 +244,14 @@ async def get_countries():
     return JSONResponse({"countries": countries})
 
 
-# ============================================================
-# PUNTO DE ENTRADA — Para correr desde terminal con: python main.py
-# Equivalente a public static void main() en Java
-# ============================================================
 
 if __name__ == "__main__":
     import uvicorn
 
-    # Iniciamos el servidor con uvicorn
-    # reload=True hace que el servidor se reinicie automáticamente
-    # cuando cambias el código — útil durante desarrollo
     uvicorn.run(
-        "main:app",           # Nombre del módulo y la instancia de FastAPI
-        host="0.0.0.0",       # Escucha en todas las interfaces de red
-        port=settings.port,   # Puerto del .env (por defecto 8000)
-        reload=True,          # Reinicio automático al cambiar código
-        log_level="info"      # Nivel de logs del servidor
+        "main:app",
+        host="0.0.0.0",
+        port=settings.port,
+        reload=True,
+        log_level="info"
     )

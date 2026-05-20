@@ -1,32 +1,27 @@
 <!DOCTYPE html>
-<!--
-    templates/index.html
-    Interfaz web de UTEL Lead Tester
-    Usa HTMX para actualizaciones en tiempo real via SSE
-    El servidor FastAPI renderiza este HTML con Jinja2
--->
+
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
 
-    <!-- Fuente Google Fonts — Geist Mono para un look técnico profesional -->
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
-    <!-- HTMX — librería para actualizaciones en tiempo real sin JavaScript complejo -->
-    <!-- Es como Ajax pero declarativo — se configura con atributos HTML -->
+
+
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 
-    <!-- Extensión SSE de HTMX — para escuchar el stream de eventos del servidor -->
+
     <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
 
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-    <!-- HEADER -->
+
     <header class="header">
         <div class="header-inner">
             <div class="logo">
@@ -42,13 +37,13 @@
 
     <main class="main">
 
-        <!-- PANEL DE CONTROL -->
+
         <section class="control-panel">
             <h2 class="section-title">Configuración</h2>
 
-            <!-- Formulario de configuración -->
-            <!-- hx-post: cuando se envíe, hace POST a /api/run -->
-            <!-- hx-swap="none": no reemplaza nada — la UI se actualiza via SSE -->
+
+
+
             <form
                 id="run-form"
                 hx-post="/api/run"
@@ -58,7 +53,7 @@
             >
                 <div class="form-grid">
 
-                    <!-- Selector de país -->
+
                     <div class="form-group">
                         <label class="form-label" for="country">País</label>
                         <select class="form-select" id="country" name="country" required>
@@ -69,7 +64,7 @@
                         </select>
                     </div>
 
-                    <!-- ID del Sheets (opcional) -->
+
                     <div class="form-group">
                         <label class="form-label" for="sheet_id">
                             ID de Google Sheets
@@ -84,7 +79,7 @@
                         >
                     </div>
 
-                    <!-- Hoja del Sheets (opcional) -->
+
                     <div class="form-group">
                         <label class="form-label" for="sheet_tab">
                             Hoja
@@ -101,7 +96,7 @@
 
                 </div>
 
-                <!-- Botones de acción -->
+
                 <div class="action-buttons">
                     <button type="submit" class="btn btn-primary" id="btn-start">
                         <span class="btn-icon">▶</span>
@@ -121,7 +116,7 @@
             </form>
         </section>
 
-        <!-- BARRA DE PROGRESO -->
+
         <section class="progress-section" id="progress-section" style="display:none">
             <div class="progress-header">
                 <span class="progress-label" id="progress-label">Iniciando...</span>
@@ -130,15 +125,15 @@
             <div class="progress-bar-container">
                 <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
             </div>
-            <!-- Lead siendo procesado ahora mismo -->
+
             <div class="processing-now" id="processing-now" style="display:none">
                 <span class="processing-icon">⟳</span>
                 <span id="processing-text">Procesando...</span>
             </div>
         </section>
 
-        <!-- COLUMNAS DE RESULTADOS -->
-        <!-- Se conecta al endpoint SSE /api/stream para recibir eventos en tiempo real -->
+
+
         <div
             class="results-grid"
             id="results-container"
@@ -148,7 +143,7 @@
             hx-on:sse:message="handleSSEMessage(event)"
         >
 
-            <!-- COLUMNA DE ÉXITOS (verde) -->
+
             <div class="results-column success-column">
                 <div class="column-header success-header">
                     <span class="column-icon">✓</span>
@@ -156,14 +151,14 @@
                     <span class="column-count" id="success-count">0</span>
                 </div>
                 <div class="results-list" id="success-list">
-                    <!-- Los leads exitosos aparecen aquí en tiempo real -->
+
                     <div class="empty-state">
                         <span>Los leads confirmados aparecerán aquí</span>
                     </div>
                 </div>
             </div>
 
-            <!-- COLUMNA DE ERRORES (roja) -->
+
             <div class="results-column error-column">
                 <div class="column-header error-header">
                     <span class="column-icon">✗</span>
@@ -171,7 +166,7 @@
                     <span class="column-count" id="error-count">0</span>
                 </div>
                 <div class="results-list" id="error-list">
-                    <!-- Los leads con error aparecen aquí -->
+
                     <div class="empty-state">
                         <span>Los leads con error aparecerán aquí</span>
                     </div>
@@ -180,7 +175,7 @@
 
         </div>
 
-        <!-- PANEL DE RESUMEN FINAL -->
+
         <section class="summary-panel" id="summary-panel" style="display:none">
             <h3 class="summary-title">Resumen final</h3>
             <div class="summary-stats">
@@ -205,12 +200,8 @@
 
     </main>
 
-    <!-- ============================================================
-         JAVASCRIPT — Maneja la lógica de la UI
-         Solo el mínimo necesario — HTMX hace la mayor parte del trabajo
-    ============================================================ -->
+
     <script>
-        // Contadores de éxitos y errores
         let successCount = 0;
         let errorCount = 0;
         let totalLeads = 0;
@@ -221,18 +212,14 @@
          * Actualiza la UI para mostrar que está corriendo.
          */
         function onRunStarted(event) {
-            // Cambiamos el estado del indicador
             document.querySelector('.status-dot').className = 'status-dot running';
             document.querySelector('.status-text').textContent = 'Procesando...';
 
-            // Activamos el botón Detener y desactivamos Iniciar
             document.getElementById('btn-start').disabled = true;
             document.getElementById('btn-stop').disabled = false;
 
-            // Mostramos la barra de progreso
             document.getElementById('progress-section').style.display = 'block';
 
-            // Reseteamos los contadores
             successCount = 0;
             errorCount = 0;
             totalLeads = 0;
@@ -240,13 +227,11 @@
             document.getElementById('success-count').textContent = '0';
             document.getElementById('error-count').textContent = '0';
 
-            // Limpiamos las listas de resultados
             document.getElementById('success-list').innerHTML =
                 '<div class="empty-state"><span>Esperando leads...</span></div>';
             document.getElementById('error-list').innerHTML =
                 '<div class="empty-state"><span>Sin errores por ahora</span></div>';
 
-            // Ocultamos el resumen anterior
             document.getElementById('summary-panel').style.display = 'none';
         }
 
@@ -256,16 +241,13 @@
          */
         function handleSSEMessage(event) {
             try {
-                // Parseamos el JSON del evento
                 const parsed = JSON.parse(event.detail.data);
                 const type = parsed.type;
                 const data = parsed.data;
 
-                // Despachamos según el tipo de evento
                 switch(type) {
 
                     case 'leads_loaded':
-                        // El servidor informó cuántos leads hay en total
                         totalLeads = data.total;
                         document.getElementById('progress-label').textContent =
                             `${data.country} — Hoja ${data.tab}`;
@@ -274,14 +256,12 @@
                         break;
 
                     case 'processing':
-                        // El servidor está procesando este lead ahora mismo
                         document.getElementById('processing-now').style.display = 'flex';
                         document.getElementById('processing-text').textContent =
                             `Procesando: ${data.email} (${data.index}/${data.total})`;
                         break;
 
                     case 'success':
-                        // Un lead llegó exitosamente a InConcert
                         addSuccessItem(data);
                         successCount++;
                         processedLeads++;
@@ -289,7 +269,6 @@
                         break;
 
                     case 'lead_error':
-                        // Un lead no llegó (timeout o error)
                         addErrorItem(data);
                         errorCount++;
                         processedLeads++;
@@ -297,25 +276,21 @@
                         break;
 
                     case 'done':
-                        // El proceso terminó — mostramos el resumen
                         showSummary(data);
                         onProcessFinished();
                         break;
 
                     case 'error':
-                        // Error crítico
                         showCriticalError(data.message);
                         onProcessFinished();
                         break;
 
                     case 'heartbeat':
                     case 'stream_end':
-                        // Eventos de control — no hacen nada visible
                         break;
                 }
 
             } catch(e) {
-                // Ignoramos errores de parseo (ej: heartbeats vacíos)
             }
         }
 
@@ -325,11 +300,9 @@
         function addSuccessItem(data) {
             const list = document.getElementById('success-list');
 
-            // Removemos el estado vacío si existe
             const emptyState = list.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
 
-            // Creamos el elemento del lead exitoso
             const item = document.createElement('div');
             item.className = 'result-item success-item';
             item.innerHTML = `
@@ -343,10 +316,8 @@
                 </a>
             `;
 
-            // Insertamos al inicio de la lista (los más recientes arriba)
             list.insertBefore(item, list.firstChild);
 
-            // Actualizamos el contador
             document.getElementById('success-count').textContent = successCount + 1;
         }
 
@@ -356,11 +327,9 @@
         function addErrorItem(data) {
             const list = document.getElementById('error-list');
 
-            // Removemos el estado vacío si existe
             const emptyState = list.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
 
-            // Creamos el elemento del lead con error
             const item = document.createElement('div');
             item.className = 'result-item error-item';
             item.innerHTML = `
@@ -372,10 +341,8 @@
                 <div class="result-url">${data.url.substring(0, 60)}...</div>
             `;
 
-            // Insertamos al inicio de la lista
             list.insertBefore(item, list.firstChild);
 
-            // Actualizamos el contador
             document.getElementById('error-count').textContent = errorCount + 1;
         }
 

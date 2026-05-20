@@ -1,13 +1,12 @@
-# ============================================================
-# sheets/writer.py
-# Escribe los resultados (links de capturas o errores) en el Sheets
-# Equivalente a un @Repository en Spring Boot que guarda en base de datos
-# ============================================================
+"""Repositorio de escritura para Google Sheets.
 
-import gspread                                          # Librería para Google Sheets
-from google.oauth2.service_account import Credentials  # Para autenticarse con Google
-from typing import Optional                             # Para campos opcionales
-from loguru import logger                               # Para logs
+Escribe el link final de Drive o un marcador de error en la columna del dia correspondiente a la fila procesada.
+"""
+
+import gspread
+from google.oauth2.service_account import Credentials
+from typing import Optional
+from loguru import logger
 
 from config.google_auth import get_google_credentials
 
@@ -18,10 +17,8 @@ class SheetsWriter:
     """
 
     def __init__(self):
-        # Cliente de Google Sheets
         self._client: Optional[gspread.Client] = None
 
-        # Conectamos al crear la instancia
         self._connect()
 
     def _connect(self) -> None:
@@ -32,10 +29,8 @@ class SheetsWriter:
         try:
             logger.info("🔗 SheetsWriter conectando con Google...")
 
-            # Cargamos las credenciales de la Service Account
             credentials = get_google_credentials()
 
-            # Creamos el cliente autenticado
             self._client = gspread.authorize(credentials)
             logger.info("✅ SheetsWriter conectado")
 
@@ -65,19 +60,14 @@ class SheetsWriter:
             test_email: correo de prueba (para el log)
         """
         try:
-            # Construimos la referencia de celda (ej: "G86")
             cell = f"{column}{row_number}"
 
             logger.info(f"✍️  Escribiendo en {tab_name}!{cell} → {screenshot_link[:50]}...")
 
-            # Abrimos el Sheets
             spreadsheet = self._client.open_by_key(sheet_id)
 
-            # Abrimos la hoja específica
             worksheet = spreadsheet.worksheet(tab_name)
 
-            # Escribimos el link en la celda
-            # update() recibe la referencia de celda y el valor a escribir
             worksheet.update(cell, [[screenshot_link]])
 
             logger.success(f"✅ Link escrito en {cell} para {test_email}")
@@ -109,19 +99,15 @@ class SheetsWriter:
             reason: motivo del error
         """
         try:
-            # Construimos la referencia de celda
             cell = f"{column}{row_number}"
 
-            # Mensaje que se escribe en la celda para revisión manual
             error_message = f"ERROR - lead no llegó ({reason}) - revisión manual"
 
             logger.warning(f"⚠️  Escribiendo error en {tab_name}!{cell} para {test_email}")
 
-            # Abrimos el Sheets y la hoja
             spreadsheet = self._client.open_by_key(sheet_id)
             worksheet = spreadsheet.worksheet(tab_name)
 
-            # Escribimos el mensaje de error en la celda
             worksheet.update(cell, [[error_message]])
 
             logger.warning(f"❌ Error registrado en {cell}: {reason}")

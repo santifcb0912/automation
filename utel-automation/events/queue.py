@@ -1,13 +1,12 @@
-# ============================================================
-# events/queue.py
-# Cola de eventos thread-safe para comunicación entre
-# el thread de Playwright y el event loop de FastAPI (SSE)
-# ============================================================
+"""Puente thread-safe entre el worker de Playwright y el stream SSE de FastAPI.
 
-import queue                          # queue.Queue es thread-safe — funciona entre threads
-import json                           # Para convertir datos a JSON
-import asyncio                        # Para el generador async de SSE
-from loguru import logger             # Para logs
+El Orchestrator corre fuera del event loop principal de FastAPI. queue.Queue permite publicar progreso desde ese worker mientras /api/stream consume eventos asincronicamente para el navegador.
+"""
+
+import queue
+import json
+import asyncio
+from loguru import logger
 
 
 class EventQueue:
@@ -24,15 +23,10 @@ class EventQueue:
     """
 
     def __init__(self):
-        # queue.Queue es thread-safe — puede usarse desde múltiples threads
-        # sin riesgo de corrupción de datos
         self._queue: queue.Queue = queue.Queue()
 
-        # Flag para saber si el proceso terminó
         self._finished: bool = False
 
-        # El event loop de FastAPI — lo guardamos para poder
-        # notificar al loop principal desde el thread de Playwright
         self._main_loop: asyncio.AbstractEventLoop = None
 
         logger.debug("📬 EventQueue thread-safe inicializada")
@@ -57,7 +51,6 @@ class EventQueue:
             "type": event_type,
             "data": data
         }
-        # put() es thread-safe — podemos llamarlo desde cualquier thread
         self._queue.put(event)
         logger.debug(f"📤 Evento emitido: {event_type}")
 
@@ -77,23 +70,16 @@ class EventQueue:
         """
         while not self._finished or not self._queue.empty():
             try:
-                # Intentamos sacar un evento sin bloquear
-                # get_nowait() lanza queue.Empty si no hay eventos
                 event = self._queue.get_nowait()
 
-                # Convertimos a JSON y formateamos como SSE
                 event_json = json.dumps(event, ensure_ascii=False)
                 yield f"data: {event_json}\n\n"
 
             except queue.Empty:
-                # No hay eventos — esperamos 100ms y volvemos a intentar
-                # Usamos asyncio.sleep para no bloquear el event loop de FastAPI
                 await asyncio.sleep(0.1)
 
-                # Enviamos heartbeat cada ~3 segundos para mantener la conexión viva
                 yield "data: {\"type\": \"heartbeat\"}\n\n"
 
-        # Proceso terminado — cerramos el stream
         yield "data: {\"type\": \"stream_end\"}\n\n"
         logger.debug("🔚 Stream SSE cerrado")
 
@@ -104,7 +90,6 @@ class EventQueue:
 
     def reset(self) -> None:
         """Resetea la cola para una nueva ejecución."""
-        # Vaciamos la queue existente
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()

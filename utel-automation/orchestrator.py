@@ -1,26 +1,35 @@
-# ============================================================
-# orchestrator.py
-# Coordinador central del sistema — conecta todos los módulos
-# Maneja el loop de leads con 3 workers paralelos (Semaphore)
-# Equivalente a un @Service principal en Spring Boot que
-# coordina múltiples @Services y @Repositories
-# ============================================================
+"""Servicio principal que coordina el flujo completo de validacion de leads.
 
-import asyncio                              # Para programación asíncrona y Semaphore
-from datetime import datetime               # Para generar el correo de prueba con fecha
-from typing import Optional                 # Para tipos opcionales
-from loguru import logger                   # Para logs
+Mapa mental si vienes de Spring Boot:
+- Orchestrator es el @Service principal.
+- SheetsReader y SheetsWriter cumplen el rol de repositories contra Google Sheets.
+- FormFiller, InConcertScraper y ScreenshotManager son servicios de dominio.
+- EventQueue publica el avance hacia la interfaz web.
 
-from config.settings import settings        # Configuración del sistema
+Flujo de negocio:
+1. Leer leads del pais seleccionado desde Google Sheets.
+2. Generar un correo de prueba unico para cada lead.
+3. Llenar y enviar la landing page con Playwright.
+4. Buscar el lead en InConcert hasta encontrarlo o agotar timeout.
+5. Preparar Creacion/Origen Id y Contacto/Nivel de programa.
+6. Tomar captura, subirla a Drive y escribir el link en Sheets.
+"""
+
+import asyncio
+from datetime import datetime
+from typing import Optional
+from loguru import logger
+
+from config.settings import settings
 from config.models import LeadRow, LeadStatus, RunRequest, RunResult, SSEEvent
-from config.countries import get_country    # Para obtener configuración del país
-from sheets.reader import SheetsReader      # Para leer los leads del Sheets
-from sheets.writer import SheetsWriter      # Para escribir resultados en Sheets
-from automation.browser import BrowserManager      # Para manejar el navegador
-from automation.form_filler import FormFiller      # Para llenar formularios
-from automation.inconcert import InConcertScraper  # Para verificar en InConcert
-from automation.screenshot import ScreenshotManager  # Para capturas y Drive
-from events.queue import EventQueue         # Para enviar eventos a la UI
+from config.countries import get_country
+from sheets.reader import SheetsReader
+from sheets.writer import SheetsWriter
+from automation.browser import BrowserManager
+from automation.form_filler import FormFiller
+from automation.inconcert import InConcertScraper
+from automation.screenshot import ScreenshotManager
+from events.queue import EventQueue
 
 
 class Orchestrator:
@@ -41,36 +50,28 @@ class Orchestrator:
 
     def __init__(
         self,
-        sheets_reader: SheetsReader,    # Inyectado — lee el Sheets
-        sheets_writer: SheetsWriter,    # Inyectado — escribe en el Sheets
-        screenshot_manager: ScreenshotManager,  # Inyectado — capturas y Drive
-        event_queue: EventQueue         # Inyectado — eventos para la UI
+        sheets_reader: SheetsReader,
+        sheets_writer: SheetsWriter,
+        screenshot_manager: ScreenshotManager,
+        event_queue: EventQueue
     ):
         """
         Constructor con inyección de dependencias.
         En Java/Spring sería @Autowired — aquí lo recibimos como parámetros.
         """
-        # Repositorios de Sheets (lectura y escritura)
         self.sheets_reader = sheets_reader
         self.sheets_writer = sheets_writer
 
-        # Servicio de capturas de pantalla
         self.screenshot_manager = screenshot_manager
 
-        # Cola de eventos para actualizar la UI en tiempo real
         self.event_queue = event_queue
 
-        # Semáforo para limitar workers paralelos a 3
-        # Equivalente a un ThreadPoolExecutor(maxThreads=3) en Java
         self._semaphore = asyncio.Semaphore(settings.max_workers)
 
-        # Flag para cancelar el proceso desde la UI
         self._cancelled = False
 
-        # Contador de correos de prueba — empieza en 1 y sube por cada lead
-        # Se reinicia en cada ejecución nueva
         self._email_counter = 0
-        self._counter_lock = asyncio.Lock()  # Lock para evitar condiciones de carrera
+        self._counter_lock = asyncio.Lock()
 
         logger.info("🎭 Orchestrator inicializado")
 
@@ -85,25 +86,20 @@ class Orchestrator:
         Retorna:
             RunResult con el resumen de la ejecución
         """
-        # Registramos el tiempo de inicio para calcular duración total
         start_time = datetime.now()
 
-        # Reseteamos el flag de cancelación para esta ejecución
         self._cancelled = False
 
-        # Reseteamos el contador de correos
         self._email_counter = 0
 
         logger.info(f"🚀 Iniciando proceso | País: {request.country}")
 
-        # Notificamos a la UI que el proceso empezó
         await self.event_queue.emit("started", {
             "country": request.country,
             "message": f"Iniciando proceso para {request.country}..."
         })
 
         try:
-            # PASO 1: Obtenemos la configuración del país
             country = get_country(request.country)
             if not country:
                 error_msg = f"País '{request.country}' no encontrado en la configuración"
@@ -111,7 +107,6 @@ class Orchestrator:
                 await self.event_queue.emit("error", {"message": error_msg})
                 return RunResult(country=request.country, sheet_tab="")
 
-            # PASO 2: Leemos los leads del Sheets
             logger.info(f"📖 Leyendo leads de Google Sheets para {request.country}...")
             leads, tab_name = self.sheets_reader.get_leads(
                 country_name=request.country,
@@ -129,7 +124,6 @@ class Orchestrator:
 
             logger.info(f"✅ {len(leads)} leads encontrados en hoja {tab_name}")
 
-            # Notificamos a la UI cuántos leads hay
             await self.event_queue.emit("leads_loaded", {
                 "total": len(leads),
                 "country": request.country,
@@ -137,12 +131,8 @@ class Orchestrator:
                 "message": f"{len(leads)} leads encontrados en hoja {tab_name}"
             })
 
-            # PASO 3: Detectamos la columna del día actual
             column = self.sheets_reader.get_column_for_today()
 
-            # PASO 4: Procesamos todos los leads con máximo 3 en paralelo
-            # asyncio.gather ejecuta todas las corrutinas "al mismo tiempo"
-            # pero el Semaphore garantiza que máximo 3 corren simultáneamente
             tasks = [
                 self._process_lead_with_semaphore(
                     lead=lead,
@@ -156,15 +146,12 @@ class Orchestrator:
                 for i, lead in enumerate(leads)
             ]
 
-            # Ejecutamos todos los tasks y esperamos a que terminen
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # PASO 5: Calculamos el resumen final
             elapsed = (datetime.now() - start_time).seconds
             successful = sum(1 for r in results if r is True)
             errors = sum(1 for r in results if r is False or isinstance(r, Exception))
 
-            # Leads con error para mostrar en la UI
             failed_leads = [
                 leads[i] for i, r in enumerate(results)
                 if r is False or isinstance(r, Exception)
@@ -183,7 +170,6 @@ class Orchestrator:
                 ]
             )
 
-            # Notificamos a la UI que terminó con el resumen completo
             await self.event_queue.emit("done", {
                 "total": len(leads),
                 "successful": successful,
@@ -210,8 +196,6 @@ class Orchestrator:
             raise
 
         finally:
-            # Marcamos la cola de eventos como terminada
-            # Esto cierra el stream SSE en la UI
             self.event_queue.mark_finished()
 
     async def _process_lead_with_semaphore(
@@ -233,8 +217,6 @@ class Orchestrator:
         Equivalente a un ThreadPoolExecutor en Java donde se limita
         el número de hilos activos simultáneamente.
         """
-        # "async with semaphore" es como un synchronized en Java
-        # Pero en vez de bloquear un thread, libera el event loop de asyncio
         async with self._semaphore:
             return await self._process_single_lead(
                 lead=lead,
@@ -271,21 +253,17 @@ class Orchestrator:
             True si el lead se procesó exitosamente
             False si hubo timeout o error
         """
-        # Si el usuario canceló, saltamos este lead
         if self._cancelled:
             return False
 
         browser_manager = None
 
         try:
-            # PASO 1: Generamos el correo de prueba único para este lead
-            # Usamos un Lock para evitar que dos workers generen el mismo número
             async with self._counter_lock:
                 self._email_counter += 1
                 counter = self._email_counter
 
-            # Formato: test190326N001@testingUtel.com
-            date_str = datetime.now().strftime("%d%m%y")  # Ej: 190326
+            date_str = datetime.now().strftime("%d%m%y")
             lead.test_email = f"test{date_str}N{counter:03d}@testingUtel.com"
 
             logger.info(
@@ -294,7 +272,6 @@ class Orchestrator:
                 f"LP: {lead.landing_url[:60]}..."
             )
 
-            # Notificamos a la UI que empezamos a procesar este lead
             await self.event_queue.emit("processing", {
                 "email": lead.test_email,
                 "url": lead.landing_url,
@@ -304,12 +281,9 @@ class Orchestrator:
                 "country": lead.country_name
             })
 
-            # PASO 2: Abrimos el navegador para este lead
-            # Cada lead tiene su propio BrowserManager — su propia instancia del browser
             browser_manager = BrowserManager()
             await browser_manager.launch()
 
-            # ---- FASE A: Llenar el formulario de la LP ----
             form_page = await browser_manager.new_page()
             form_filler = FormFiller(page=form_page, country=country)
 
@@ -329,11 +303,9 @@ class Orchestrator:
                 )
                 return False
 
-            # ---- FASE B: Verificar en InConcert ----
             inconcert_page = await browser_manager.new_page()
             scraper = InConcertScraper(page=inconcert_page, country=country)
 
-            # Hacemos login en InConcert
             login_ok = await scraper.login()
             if not login_ok:
                 logger.error(f"❌ No se pudo hacer login en InConcert para {lead.test_email}")
@@ -346,11 +318,9 @@ class Orchestrator:
                 )
                 return False
 
-            # Buscamos el lead con reintentos cada 30s, máximo 5 min
             lead_found = await scraper.search_lead(lead.test_email)
 
             if not lead_found:
-                # El lead no llegó en 5 minutos — registramos el error
                 await self._handle_error(
                     lead=lead,
                     sheet_id=sheet_id,
@@ -360,19 +330,13 @@ class Orchestrator:
                 )
                 return False
 
-            # ---- FASE C: Preparar pantalla para la captura ----
-            # Abrimos el panel de gestión del lead
             await scraper.open_lead_detail()
 
-            # Preparamos el panel central: Actividad -> Creacion -> Origen Id
             await scraper.expand_creation_event()
 
-            # Preparamos el panel izquierdo: Contacto -> Area de interes
             await scraper.expand_contact_section()
 
-            # La columna derecha (Gestión) se deja intacta — no se toca
 
-            # ---- FASE D: Captura y subida a Drive ----
             screenshot_link = await self.screenshot_manager.take_and_upload(
                 page=inconcert_page,
                 country_name=lead.country_name,
@@ -390,7 +354,6 @@ class Orchestrator:
                 )
                 return False
 
-            # ---- FASE E: Escribir link en Google Sheets ----
             self.sheets_writer.write_success(
                 sheet_id=sheet_id,
                 tab_name=tab_name,
@@ -400,7 +363,6 @@ class Orchestrator:
                 test_email=lead.test_email
             )
 
-            # ---- FASE F: Notificar éxito a la UI ----
             await self.event_queue.emit("success", {
                 "email": lead.test_email,
                 "url": lead.landing_url,
@@ -428,8 +390,6 @@ class Orchestrator:
             return False
 
         finally:
-            # Cerramos el browser siempre — aunque haya error
-            # "finally" en Python es como "finally" en Java
             if browser_manager:
                 await browser_manager.close()
 
@@ -450,7 +410,6 @@ class Orchestrator:
         lead.status = LeadStatus.ERROR if "error" in reason else LeadStatus.TIMEOUT
         lead.error_message = reason
 
-        # Escribimos el error en el Sheets
         try:
             self.sheets_writer.write_error(
                 sheet_id=sheet_id,
@@ -463,7 +422,6 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"❌ Error escribiendo error en Sheets: {e}")
 
-        # Notificamos a la UI del error
         await self.event_queue.emit("lead_error", {
             "email": lead.test_email,
             "url": lead.landing_url,

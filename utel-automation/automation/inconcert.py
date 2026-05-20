@@ -1,21 +1,24 @@
-﻿# ============================================================
-# automation/inconcert.py
-# Automatiza el flujo completo dentro del CRM InConcert:
-# 1. Login con credenciales
-# 2. BÃºsqueda del lead por correo con reintentos
-# 3. Apertura del panel de gestiÃ³n
-# 4. ExpansiÃ³n de secciones para la captura
-# Equivalente a un @Service complejo en Spring Boot
-# ============================================================
+"""Servicio de automatizacion del CRM InConcert.
 
-import asyncio                                          # Para esperas asÃ­ncronas
-from typing import Optional                             # Para tipos opcionales
+Flujo:
+1. Abrir la pagina de contactos del pais y hacer login si hace falta.
+2. Buscar el correo de prueba hasta que el lead aparezca.
+3. Abrir la vista de gestion del lead.
+4. Preparar el panel central Actividad para mostrar Creacion y Origen Id.
+5. Preparar el panel izquierdo Informacion para mostrar Contacto y Nivel de programa.
+6. Dejar la pantalla lista para ScreenshotManager.
+
+Este modulo usa muchos selectores porque InConcert se automatiza como interfaz visual, no como API estable.
+"""
+
+import asyncio
+from typing import Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
-from loguru import logger                               # Para logs
+from loguru import logger
 
-from config.settings import settings                    # ConfiguraciÃ³n del sistema
-from config.countries import Country                    # Datos del paÃ­s
-from automation.browser import BrowserManager           # Para delays humanos
+from config.settings import settings
+from config.countries import Country
+from automation.browser import BrowserManager
 
 
 class InConcertScraper:
@@ -36,13 +39,10 @@ class InConcertScraper:
             page: pestaÃ±a del navegador para InConcert
             country: configuraciÃ³n del paÃ­s (URL de InConcert)
         """
-        # La pestaÃ±a del navegador donde operamos InConcert
         self.page = page
 
-        # ConfiguraciÃ³n del paÃ­s â€” tiene la URL del CRM
         self.country = country
 
-        # Flag para cancelar el proceso si el usuario presiona "Detener"
         self._cancelled = False
 
         logger.debug(f"ðŸ”§ InConcertScraper creado para {country.id}")
@@ -57,38 +57,27 @@ class InConcertScraper:
             False si hubo algÃºn problema
         """
         try:
-            # Construimos la URL de contactos directamente
-            # AsÃ­ llegamos directo a la secciÃ³n de bÃºsqueda
-            # Construimos la URL correcta de contactos
-            # inconcert_url termina en /mas/home
-            # La URL de contactos es /mas/contact/people
             base = self.country.inconcert_url.rstrip("/")
             if base.endswith("/home"):
-                base = base[:-5]  # Quitamos "/home"
+                base = base[:-5]
             contacts_url = base + "/contact/people"
 
             logger.info(f"ðŸ” Navegando a InConcert: {contacts_url}")
 
-            # Navegamos a la URL del CRM
             await self.page.goto(
                 contacts_url,
                 wait_until="domcontentloaded",
                 timeout=30000
             )
 
-            # Pausa humana despuÃ©s de cargar
             await BrowserManager.human_delay(1500, 2500)
 
-            # Verificamos si ya estamos logueados (puede haber sesiÃ³n activa)
-            # Si vemos el tÃ­tulo "Contactos", ya estamos dentro
             if await self._is_logged_in():
                 logger.info("âœ… SesiÃ³n activa detectada â€” ya estamos dentro")
                 return True
 
-            # Si no estamos logueados, buscamos el formulario de login
             logger.info("ðŸ”‘ Realizando login...")
 
-            # Selectores posibles para el campo de usuario
             user_selectors = [
                 "input[type='email']",
                 "input[name='username']",
@@ -100,7 +89,6 @@ class InConcertScraper:
                 "input[id*='email']",
             ]
 
-            # Llenamos el campo de usuario
             for selector in user_selectors:
                 try:
                     element = await self.page.query_selector(selector)
@@ -117,7 +105,6 @@ class InConcertScraper:
 
             await BrowserManager.human_delay(300, 600)
 
-            # Selectores posibles para el campo de contraseÃ±a
             password_selectors = [
                 "input[type='password']",
                 "input[name='password']",
@@ -126,7 +113,6 @@ class InConcertScraper:
                 "input[id*='pass']",
             ]
 
-            # Llenamos el campo de contraseÃ±a
             for selector in password_selectors:
                 try:
                     element = await self.page.query_selector(selector)
@@ -143,7 +129,6 @@ class InConcertScraper:
 
             await BrowserManager.human_delay(500, 1000)
 
-            # Hacemos click en el botÃ³n de login
             login_button_selectors = [
                 "button[type='submit']",
                 "input[type='submit']",
@@ -165,11 +150,9 @@ class InConcertScraper:
                 except Exception:
                     continue
 
-            # Esperamos a que cargue el dashboard despuÃ©s del login
             await self.page.wait_for_load_state("networkidle", timeout=15000)
             await BrowserManager.human_delay(2000, 3000)
 
-            # Verificamos si el login fue exitoso
             if await self._is_logged_in():
                 logger.info("âœ… Login exitoso en InConcert")
                 return True
@@ -187,13 +170,11 @@ class InConcertScraper:
         Busca elementos que solo existen cuando estamos dentro del CRM.
         """
         try:
-            # Buscamos elementos del dashboard de InConcert
-            # Estos solo aparecen cuando el usuario estÃ¡ autenticado
             dashboard_indicators = [
-                ".mas-sidebar",           # Barra lateral del CRM
-                "[class*='sidebar']",     # Cualquier sidebar
-                ".contact-list",          # Lista de contactos
-                "h1:has-text('Contactos')",  # TÃ­tulo de la secciÃ³n
+                ".mas-sidebar",
+                "[class*='sidebar']",
+                ".contact-list",
+                "h1:has-text('Contactos')",
                 "[data-testid='contacts']",
             ]
 
@@ -227,9 +208,7 @@ class InConcertScraper:
             True si el lead apareciÃ³
             False si pasaron 5 minutos sin aparecer (timeout)
         """
-        # Calculamos el nÃºmero mÃ¡ximo de intentos
         max_attempts = settings.lead_timeout_seconds // settings.lead_retry_interval_seconds
-        # Nos aseguramos de tener al menos 1 intento
         max_attempts = max(max_attempts, 1)
 
         logger.info(f"ðŸ” Buscando lead: {email}")
@@ -237,26 +216,22 @@ class InConcertScraper:
 
         for attempt in range(1, max_attempts + 1):
 
-            # Si el usuario cancelÃ³ el proceso, salimos
             if self._cancelled:
                 logger.info("ðŸ›‘ BÃºsqueda cancelada por el usuario")
                 return False
 
             logger.info(f"ðŸ”„ Intento {attempt}/{max_attempts} buscando: {email}")
 
-            # Intentamos la bÃºsqueda en este intento
             found = await self._perform_search(email)
 
             if found:
                 logger.success(f"âœ… Lead encontrado en intento {attempt}: {email}")
                 return True
 
-            # Si no encontramos el lead y no es el Ãºltimo intento, esperamos
             if attempt < max_attempts:
                 logger.info(f"â³ Lead no encontrado â€” esperando {settings.lead_retry_interval_seconds}s...")
                 await asyncio.sleep(settings.lead_retry_interval_seconds)
 
-        # Si llegamos aquÃ­, se agotaron los intentos
         logger.warning(f"âŒ TIMEOUT â€” Lead no llegÃ³ en {settings.lead_timeout_seconds}s: {email}")
         return False
 
@@ -277,18 +252,15 @@ class InConcertScraper:
             False si no apareciÃ³
         """
         try:
-            # Verificamos que estemos en la secciÃ³n correcta de contactos
             current_url = self.page.url
             if "contact/people" not in current_url:
-                # Construimos la URL correcta quitando /home y agregando /contact/people
                 base = self.country.inconcert_url.rstrip("/")
                 if base.endswith("/home"):
-                    base = base[:-5]  # Quitamos "/home"
+                    base = base[:-5]
                 contacts_url = base + "/contact/people"
                 await self.page.goto(contacts_url, wait_until="domcontentloaded")
                 await BrowserManager.human_delay(1500, 2000)
 
-            # Recargamos la pÃ¡gina para limpiar resultados anteriores
             await self.page.reload(wait_until="domcontentloaded")
             await BrowserManager.human_delay(1000, 1500)
 
@@ -301,7 +273,6 @@ class InConcertScraper:
                 logger.warning("âš ï¸  No se encontrÃ³ campo de bÃºsqueda")
                 return False
 
-            # Limpiamos el campo y escribimos el email
             await search_input.click()
             await self.page.keyboard.press("Control+A")
             await self.page.keyboard.press("Delete")
@@ -309,18 +280,14 @@ class InConcertScraper:
 
             await BrowserManager.human_delay(300, 600)
 
-            # Enter suele ejecutar la busqueda en este componente.
             await self.page.keyboard.press("Enter")
             logger.debug("âœ… Enter ejecutado en campo de bÃºsqueda")
             await BrowserManager.human_delay(1200, 1600)
 
-            # Fallback: click en lupa/boton asociado al mismo bloque del input.
             await self._click_search_button_near_input(search_input)
 
-            # Esperamos a que carguen los resultados
             await BrowserManager.human_delay(2000, 3000)
 
-            # Verificamos si apareciÃ³ algÃºn resultado
             return await self._has_results()
 
         except Exception as e:
@@ -329,8 +296,6 @@ class InConcertScraper:
 
     async def _select_email_filter(self) -> bool:
         """Selecciona el filtro Email en InConcert, evitando dejar Nombre activo."""
-        # Flujo real del UI: el filtro es un dropdown custom que muestra "Nombre".
-        # Hay que abrirlo y elegir "Email" antes de escribir el lead.
         try:
             opened = await self._open_basic_search_filter_dropdown()
             if opened:
@@ -383,7 +348,6 @@ class InConcertScraper:
         except Exception:
             pass
 
-        # Fallback para dropdown custom: abrir combobox y elegir texto Email.
         try:
             combo_candidates = self.page.locator(
                 "[role='combobox']:visible, [class*='select']:visible, [class*='dropdown']:visible"
@@ -430,7 +394,6 @@ class InConcertScraper:
                 except Exception:
                     continue
 
-        # Fallback por DOM: click al elemento visible cuyo texto sea exactamente Nombre.
         try:
             clicked = await self.page.evaluate(
                 """
@@ -568,15 +531,12 @@ class InConcertScraper:
             False si no hay resultados
         """
         try:
-            # Buscamos el texto que indica el nÃºmero de resultados
             page_content = await self.page.content()
 
-            # Si el texto dice "0 resultados", no hay lead todavÃ­a
             if "De 0 resultados" in page_content or "0 resultados totales" in page_content:
                 logger.debug("ðŸ“­ 0 resultados â€” lead aÃºn no llegÃ³")
                 return False
 
-            # Si hay una fila en la tabla de resultados, el lead llegÃ³
             result_row_selectors = [
                 "table tbody tr",
                 ".contact-row",
@@ -1405,5 +1365,3 @@ class InConcertScraper:
         """
         self._cancelled = True
         logger.info("ðŸ›‘ InConcertScraper: cancelaciÃ³n solicitada")
-
-

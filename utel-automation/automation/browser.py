@@ -1,21 +1,19 @@
-# ============================================================
-# automation/browser.py
-# Maneja el ciclo de vida del navegador Playwright
-# Aplica stealth mode para evitar detección por Cloudflare
-# Equivalente a un @Component que maneja recursos en Spring Boot
-# ============================================================
+"""Administrador del ciclo de vida de Playwright.
 
-import asyncio                              # Para operaciones asíncronas
-import random                               # Para tiempos aleatorios (comportamiento humano)
-from typing import Optional                 # Para tipos opcionales
-from playwright.async_api import (          # Importamos lo necesario de Playwright
+Crea un contexto Chromium estable con viewport, locale y ajustes anti-deteccion usados tanto por las landing pages como por InConcert.
+"""
+
+import asyncio
+import random
+from typing import Optional
+from playwright.async_api import (
     async_playwright,
     Browser,
     BrowserContext,
     Page,
     Playwright
 )
-from loguru import logger                   # Para logs
+from loguru import logger
 
 
 class BrowserManager:
@@ -30,19 +28,14 @@ class BrowserManager:
         browser_manager = BrowserManager()
         await browser_manager.launch()
         page = await browser_manager.new_page()
-        # ... usar la página ...
         await browser_manager.close()
     """
 
     def __init__(self):
-        # Instancia de Playwright — el motor que controla el navegador
         self._playwright: Optional[Playwright] = None
 
-        # El navegador Chromium
         self._browser: Optional[Browser] = None
 
-        # El contexto del navegador — equivale a una ventana del browser
-        # Un contexto puede tener múltiples pestañas (Pages)
         self._context: Optional[BrowserContext] = None
 
         logger.debug("🌐 BrowserManager creado")
@@ -57,16 +50,11 @@ class BrowserManager:
         """
         logger.info("🚀 Iniciando navegador Chromium con stealth mode...")
 
-        # Iniciamos Playwright
         self._playwright = await async_playwright().start()
 
-        # Lanzamos Chromium con configuraciones específicas anti-detección
         self._browser = await self._playwright.chromium.launch(
-            # headless=False significa que el navegador ES visible
-            # Lo ponemos visible para debugging — en producción puede ponerse True
             headless=False,
 
-            # Argumentos que hacen el browser más parecido a un humano real
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
@@ -75,39 +63,28 @@ class BrowserManager:
                 "--no-first-run",
                 "--no-zygote",
                 "--disable-gpu",
-                # Deshabilitamos la automatización de Chrome
                 "--disable-blink-features=AutomationControlled",
             ]
         )
 
-        # Creamos el contexto del navegador con configuración de stealth
         self._context = await self._browser.new_context(
-            # User agent de un Chrome real en Windows
-            # Si el user agent dice "HeadlessChrome", Cloudflare lo bloquea
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
 
-            # Tamaño de pantalla real — los bots suelen tener tamaños raros
             viewport={"width": 1366, "height": 768},
 
-            # Idioma del navegador
             locale="es-MX",
 
-            # Zona horaria de México
             timezone_id="America/Mexico_City",
 
-            # Permitimos JavaScript — algunos sites lo bloquean si está desactivado
             java_script_enabled=True,
 
-            # Ignoramos errores de certificados SSL (útil en algunos entornos)
             ignore_https_errors=True,
         )
 
-        # Aplicamos scripts de stealth ANTES de que cargue cualquier página
-        # Estos scripts modifican propiedades del browser que delatan automatización
         await self._context.add_init_script("""
             // Ocultamos que navigator.webdriver es True
             // Esta es la primera señal que busca Cloudflare
@@ -152,7 +129,6 @@ class BrowserManager:
         if not self._context:
             raise RuntimeError("El navegador no está iniciado. Llama a launch() primero.")
 
-        # Creamos una nueva página (pestaña) en el contexto
         page = await self._context.new_page()
 
         logger.debug("📄 Nueva página creada")
@@ -165,17 +141,14 @@ class BrowserManager:
         Equivalente a @PreDestroy en Spring Boot.
         """
         try:
-            # Cerramos el contexto (todas las pestañas)
             if self._context:
                 await self._context.close()
                 self._context = None
 
-            # Cerramos el navegador
             if self._browser:
                 await self._browser.close()
                 self._browser = None
 
-            # Detenemos Playwright
             if self._playwright:
                 await self._playwright.stop()
                 self._playwright = None
@@ -195,10 +168,8 @@ class BrowserManager:
             min_ms: tiempo mínimo de espera en milisegundos
             max_ms: tiempo máximo de espera en milisegundos
         """
-        # Generamos un tiempo aleatorio entre min y max
         delay_ms = random.randint(min_ms, max_ms)
 
-        # asyncio.sleep recibe segundos, dividimos entre 1000
         await asyncio.sleep(delay_ms / 1000)
 
     @staticmethod
@@ -215,15 +186,12 @@ class BrowserManager:
             selector: selector CSS del campo de texto
             text: texto a escribir
         """
-        # Primero hacemos click en el campo para enfocarlo
         await page.click(selector)
 
-        # Pequeña pausa antes de empezar a escribir (como un humano que piensa)
         await BrowserManager.human_delay(200, 600)
 
-        # Escribimos letra por letra con pausas aleatorias
         await page.type(
             selector,
             text,
-            delay=random.randint(50, 150)  # Pausa entre 50ms y 150ms entre letras
+            delay=random.randint(50, 150)
         )

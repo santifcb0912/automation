@@ -105,7 +105,8 @@ class SheetsReader:
         self,
         country_name: str,
         sheet_id: Optional[str] = None,
-        sheet_tab: Optional[str] = None
+        sheet_tab: Optional[str] = None,
+        mexico_flow: Optional[str] = None
     ) -> tuple[List[LeadRow], str]:
         """
         Lee el Sheets y retorna la lista de leads del país solicitado.
@@ -148,11 +149,30 @@ class SheetsReader:
                 if not url_col:
                     continue
 
-                if country_name.lower() not in country_col.lower() and\
-                   country_col.lower() not in country_name.lower():
-                    continue
-
                 clean_url = url_col.split()[0] if url_col else ""
+                url_lower = clean_url.lower()
+                flow = (mexico_flow or "").strip().lower()
+                if flow == "universidad" or "niversidad" in flow:
+                    flow = "universidad"
+                is_mexico = country_name.strip().lower() in ["mexico", "méxico", "mã©xico"]
+                is_universidad_mexico_row = (
+                    is_mexico
+                    and flow == "universidad"
+                    and url_lower.startswith("https://universidad.utel.edu.mx")
+                )
+                is_cms_mexico_row = (
+                    is_mexico
+                    and flow == "cms"
+                    and url_lower.startswith("https://utel.edu.mx")
+                )
+
+                if (
+                    country_name.lower() not in country_col.lower()
+                    and country_col.lower() not in country_name.lower()
+                    and not is_universidad_mexico_row
+                    and not is_cms_mexico_row
+                ):
+                    continue
 
                 form_type_raw = location_col.strip()
                 form_type_key = form_type_raw.lower().replace(" ", "").replace("-", "").replace("_", "")

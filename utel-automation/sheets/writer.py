@@ -84,11 +84,11 @@ class SheetsWriter:
         row_number: int,
         column: str,
         test_email: str,
-        reason: str = "timeout 5 min"
+        reason: str = "timeout 2 min"
     ) -> None:
         """
         Escribe un mensaje de error en la celda cuando el lead no llegó.
-        Se llama cuando el timeout de 5 minutos se cumplió sin encontrar el lead.
+        Se llama cuando el timeout de 2 minutos se cumplió sin encontrar el lead.
 
         Parámetros:
             sheet_id: ID del Google Sheets

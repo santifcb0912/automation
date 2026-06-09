@@ -77,6 +77,8 @@ class RunRequest:
 
     sheet_tab: Optional[str] = None
 
+    mexico_flow: Optional[str] = None
+
 
 @dataclass
 class RunResult:

@@ -1,6 +1,7 @@
 """Puente thread-safe entre el worker de Playwright y el stream SSE de FastAPI.
 
-El Orchestrator corre fuera del event loop principal de FastAPI. queue.Queue permite publicar progreso desde ese worker mientras /api/stream consume eventos asincronicamente para el navegador.
+El Orchestrator corre fuera del event loop principal de FastAPI. queue.
+Queue permite publicar progreso desde ese worker mientras /api/stream consume eventos asincronicamente para el navegador.
 """
 
 import queue

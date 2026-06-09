@@ -42,6 +42,41 @@ screenshot_manager = ScreenshotManager()
 
 active_orchestrator: Optional[Orchestrator] = None
 
+COUNTRY_OPTIONS = [
+    "Mexico", "Peru", "Colombia", "Ecuador", "Argentina",
+    "Bolivia", "Chile", "USA", "Dominicana", "Paraguay",
+    "Guatemala", "El Salvador", "Honduras", "Panama", "Global"
+]
+
+
+def normalize_mexico_flow(flow: str = "") -> Optional[str]:
+    selected_flow = (flow or "").strip().lower()
+    if not selected_flow:
+        return None
+
+    if selected_flow == "cms":
+        return "cms"
+
+    if selected_flow == "universidad" or "niversidad" in selected_flow:
+        return "universidad"
+
+    return selected_flow
+
+
+def normalize_country_selection(country: str, mexico_flow: str = "") -> tuple[str, Optional[str]]:
+    selected_country = (country or "").strip()
+    selected_flow = normalize_mexico_flow(mexico_flow)
+
+    if "|" in selected_country:
+        base_country, flow = selected_country.split("|", 1)
+        selected_country = base_country.strip()
+        selected_flow = normalize_mexico_flow(flow) or selected_flow
+
+    if selected_country.lower() == "mexico" and not selected_flow:
+        selected_flow = "cms"
+
+    return selected_country, selected_flow
+
 
 
 @asynccontextmanager
@@ -81,17 +116,11 @@ async def index(request: Request):
 
     Renderiza el archivo templates/index.html con los países disponibles.
     """
-    countries = [
-        "Mexico", "Peru", "Colombia", "Ecuador", "Argentina",
-        "Bolivia", "Chile", "USA", "Dominicana", "Paraguay",
-        "Guatemala", "El Salvador", "Honduras", "Panama", "Global"
-    ]
-
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "countries": countries,
+            "countries": COUNTRY_OPTIONS,
             "title": "UTEL Lead Tester"
         }
     )
@@ -101,6 +130,7 @@ async def index(request: Request):
 async def run_test(
     background_tasks: BackgroundTasks,
     country: str = Form(...),
+    mexico_flow: str = Form(""),
     sheet_id: str = Form(""),
     sheet_tab: str = Form(""),
 ):
@@ -119,8 +149,11 @@ async def run_test(
 
     event_queue.reset()
 
+    selected_country, selected_mexico_flow = normalize_country_selection(country, mexico_flow)
+
     request = RunRequest(
-        country=country,
+        country=selected_country,
+        mexico_flow=selected_mexico_flow,
         sheet_id=sheet_id if sheet_id else None,
         sheet_tab=sheet_tab if sheet_tab else None
     )
@@ -132,7 +165,10 @@ async def run_test(
         event_queue=event_queue
     )
 
-    logger.info(f"▶️  Iniciando proceso para {country}")
+    logger.info(
+        f"▶️  Iniciando proceso para {selected_country} | "
+        f"flujo Mexico: {selected_mexico_flow or 'n/a'}"
+    )
 
     import concurrent.futures
     import threading
@@ -153,8 +189,9 @@ async def run_test(
 
     return JSONResponse({
         "status": "started",
-        "country": country,
-        "message": f"Proceso iniciado para {country}"
+        "country": selected_country,
+        "mexico_flow": selected_mexico_flow,
+        "message": f"Proceso iniciado para {selected_country}"
     })
 
 
@@ -236,12 +273,7 @@ async def get_countries():
     Retorna la lista de países disponibles en formato JSON.
     Útil si se quiere consumir desde Postman o desde otra aplicación.
     """
-    countries = [
-        "Mexico", "Peru", "Colombia", "Ecuador", "Argentina",
-        "Bolivia", "Chile", "USA", "Dominicana", "Paraguay",
-        "Guatemala", "El Salvador", "Honduras", "Panama", "Global"
-    ]
-    return JSONResponse({"countries": countries})
+    return JSONResponse({"countries": COUNTRY_OPTIONS})
 
 
 

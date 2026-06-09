@@ -1,7 +1,8 @@
 """Fabrica de credenciales de Google para Sheets y Drive.
 
 El sistema puede usar service account u OAuth de usuario.
-OAuth es la opcion adecuada cuando las capturas y escrituras deben hacerse con una cuenta Google que ya tiene acceso al Sheet corporativo.
+OAuth es la opcion adecuada cuando las capturas y escrituras deben hacerse con una cuenta Google
+ que ya tiene acceso al Sheet corporativo.
 """
 
 from pathlib import Path

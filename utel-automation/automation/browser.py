@@ -1,6 +1,7 @@
 """Administrador del ciclo de vida de Playwright.
 
-Crea un contexto Chromium estable con viewport, locale y ajustes anti-deteccion usados tanto por las landing pages como por InConcert.
+Crea un contexto Chromium estable con viewport, locale y ajustes anti-deteccion 
+usados tanto por las landing pages como por InConcert.
 """
 
 import asyncio

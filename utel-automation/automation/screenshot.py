@@ -4,6 +4,7 @@ Captura la vista preparada de InConcert, sube el PNG a Drive, lo comparte y reto
 """
 
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -15,6 +16,9 @@ from loguru import logger
 
 from config.settings import settings
 from config.google_auth import get_google_credentials
+
+DRIVE_UPLOAD_MAX_ATTEMPTS = 3
+DRIVE_UPLOAD_RETRY_DELAY_SECONDS = 3
 
 
 class ScreenshotManager:
@@ -169,6 +173,7 @@ class ScreenshotManager:
             None si hubo algún error
         """
         local_path = None
+        drive_link = None
 
         try:
             local_path = await self._take_screenshot(page, country_name, test_email)
@@ -176,7 +181,7 @@ class ScreenshotManager:
             if not local_path:
                 return None
 
-            drive_link = self._upload_to_drive(local_path, country_name)
+            drive_link = self._upload_to_drive_with_retries(local_path, country_name)
 
             return drive_link
 
@@ -185,12 +190,14 @@ class ScreenshotManager:
             return None
 
         finally:
-            if local_path and os.path.exists(local_path):
+            if local_path and os.path.exists(local_path) and drive_link:
                 try:
                     os.remove(local_path)
                     logger.debug(f"🗑️  Archivo temporal eliminado: {local_path}")
                 except Exception:
                     pass
+            elif local_path and os.path.exists(local_path):
+                logger.warning(f"Screenshot local conservado porque no se obtuvo link de Drive: {local_path}")
 
     async def _take_screenshot(
         self,
@@ -225,6 +232,29 @@ class ScreenshotManager:
         except Exception as e:
             logger.error(f"❌ Error tomando screenshot: {e}")
             return None
+
+    def _upload_to_drive_with_retries(self, local_path: str, country_name: str) -> Optional[str]:
+        for attempt in range(1, DRIVE_UPLOAD_MAX_ATTEMPTS + 1):
+            drive_link = self._upload_to_drive(local_path, country_name)
+            if drive_link:
+                return drive_link
+
+            if attempt < DRIVE_UPLOAD_MAX_ATTEMPTS:
+                logger.warning(
+                    f"Reintentando subida a Google Drive "
+                    f"({attempt + 1}/{DRIVE_UPLOAD_MAX_ATTEMPTS})"
+                )
+                self._reconnect_drive()
+                time.sleep(DRIVE_UPLOAD_RETRY_DELAY_SECONDS)
+
+        return None
+
+    def _reconnect_drive(self) -> None:
+        try:
+            self._drive_service = None
+            self._connect_drive()
+        except Exception as e:
+            logger.warning(f"No se pudo reconectar Google Drive antes del reintento: {e}")
 
     def _upload_to_drive(self, local_path: str, country_name: str) -> Optional[str]:
         """

@@ -51,7 +51,7 @@ class Settings:
         )
 
         self.lead_timeout_seconds: int = int(
-            self._get("LEAD_TIMEOUT_SECONDS", default="300")
+            self._get("LEAD_TIMEOUT_SECONDS", default="120")
         )
 
         self.lead_retry_interval_seconds: int = int(

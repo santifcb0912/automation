@@ -111,8 +111,11 @@ class Orchestrator:
             leads, tab_name = self.sheets_reader.get_leads(
                 country_name=request.country,
                 sheet_id=request.sheet_id,
-                sheet_tab=request.sheet_tab
+                sheet_tab=request.sheet_tab,
+                mexico_flow=request.mexico_flow
             )
+
+            leads = self._filter_mexico_flow(leads, request)
 
             if not leads:
                 logger.warning(f"⚠️  No se encontraron leads para {request.country}")
@@ -197,6 +200,41 @@ class Orchestrator:
 
         finally:
             self.event_queue.mark_finished()
+
+    def _filter_mexico_flow(self, leads: list[LeadRow], request: RunRequest) -> list[LeadRow]:
+        if request.country.lower() not in ["mexico", "mÃ©xico", "méxico"]:
+            return leads
+
+        flow = self._normalize_mexico_flow(request.mexico_flow)
+        if not flow:
+            return leads
+
+        if flow == "universidad":
+            filtered = [
+                lead for lead in leads
+                if lead.landing_url.lower().startswith("https://universidad.utel.edu.mx")
+            ]
+            logger.info(f"Flujo Mexico Universidad: {len(filtered)}/{len(leads)} leads seleccionados")
+            return filtered
+
+        if flow == "cms":
+            filtered = [
+                lead for lead in leads
+                if lead.landing_url.lower().startswith("https://utel.edu.mx")
+            ]
+            logger.info(f"Flujo Mexico CMS: {len(filtered)}/{len(leads)} leads seleccionados")
+            return filtered
+
+        logger.warning(f"Flujo Mexico desconocido '{request.mexico_flow}'; se procesaran todos los leads Mexico")
+        return leads
+
+    def _normalize_mexico_flow(self, flow: Optional[str]) -> str:
+        normalized = (flow or "").strip().lower()
+        if normalized == "cms":
+            return "cms"
+        if normalized == "universidad" or "niversidad" in normalized:
+            return "universidad"
+        return normalized
 
     async def _process_lead_with_semaphore(
         self,
@@ -326,7 +364,7 @@ class Orchestrator:
                     sheet_id=sheet_id,
                     tab_name=tab_name,
                     column=column,
-                    reason="timeout 5 min"
+                    reason=f"timeout {settings.lead_timeout_seconds // 60} min"
                 )
                 return False
 

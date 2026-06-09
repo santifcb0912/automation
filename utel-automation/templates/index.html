@@ -58,8 +58,14 @@
                         <label class="form-label" for="country">País</label>
                         <select class="form-select" id="country" name="country" required>
                             <option value="">— Selecciona un país —</option>
+                            <optgroup label="Mexico">
+                                <option value="Mexico|universidad">Universidad Mexico</option>
+                                <option value="Mexico|cms">CMS Mexico</option>
+                            </optgroup>
                             {% for country in countries %}
+                                {% if country != "Mexico" %}
                             <option value="{{ country }}">{{ country }}</option>
+                                {% endif %}
                             {% endfor %}
                         </select>
                     </div>

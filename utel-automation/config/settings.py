@@ -1,87 +1,76 @@
-"""Configuracion del sistema basada en variables de entorno.
-
-Mapa mental si vienes de Spring Boot: esto equivale a application.properties mas un bean @ConfigurationProperties.
-Los valores obligatorios vienen de .env; los opcionales definen autenticacion de Google, timeouts, workers y puerto.
-"""
-
-import os
-from dotenv import load_dotenv
-from loguru import logger
-
-load_dotenv()
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
+from pathlib import Path
+from typing import Literal
 
 
-class Settings:
-    """
-    Clase que contiene toda la configuración del sistema.
-    Equivalente a una clase @Configuration en Spring Boot.
-    Se instancia una sola vez al inicio del programa.
-    """
+class Settings(BaseSettings):
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
-    def __init__(self):
-        self.inconcert_user: str = self._get("INCONCERT_USER")
+    inconcert_user: str = Field(validation_alias="INCONCERT_USER")
+    inconcert_password: str = Field(validation_alias="INCONCERT_PASSWORD")
 
-        self.inconcert_password: str = self._get("INCONCERT_PASSWORD")
+    google_sheet_id: str = Field(validation_alias="GOOGLE_SHEET_ID")
 
-        self.google_sheet_id: str = self._get("GOOGLE_SHEET_ID")
+    google_credentials_path: str = Field(
+        default="./config/google_credentials.json",
+        validation_alias="GOOGLE_CREDENTIALS_PATH",
+    )
 
-        self.google_credentials_path: str = self._get(
-            "GOOGLE_CREDENTIALS_PATH",
-            default="./config/google_credentials.json"
-        )
+    google_auth_mode: Literal["service_account", "oauth", "user", "usuario"] = Field(
+        default="service_account",
+        validation_alias="GOOGLE_AUTH_MODE",
+    )
 
-        self.google_auth_mode: str = self._get(
-            "GOOGLE_AUTH_MODE",
-            default="service_account"
-        )
+    google_oauth_client_secret_path: str = Field(
+        default="./config/google_oauth_client_secret.json",
+        validation_alias="GOOGLE_OAUTH_CLIENT_SECRET_PATH",
+    )
 
-        self.google_oauth_client_secret_path: str = self._get(
-            "GOOGLE_OAUTH_CLIENT_SECRET_PATH",
-            default="./config/google_oauth_client_secret.json"
-        )
+    google_oauth_token_path: str = Field(
+        default="./config/google_oauth_token.json",
+        validation_alias="GOOGLE_OAUTH_TOKEN_PATH",
+    )
 
-        self.google_oauth_token_path: str = self._get(
-            "GOOGLE_OAUTH_TOKEN_PATH",
-            default="./config/google_oauth_token.json"
-        )
+    google_drive_folder_name: str = Field(
+        default="Capturas UTEL",
+        validation_alias="GOOGLE_DRIVE_FOLDER_NAME",
+    )
 
-        self.google_drive_folder_name: str = self._get(
-            "GOOGLE_DRIVE_FOLDER_NAME",
-            default="Capturas UTEL"
-        )
+    lead_timeout_seconds: int = Field(
+        default=120,
+        ge=10,
+        le=600,
+        validation_alias="LEAD_TIMEOUT_SECONDS",
+    )
 
-        self.lead_timeout_seconds: int = int(
-            self._get("LEAD_TIMEOUT_SECONDS", default="120")
-        )
+    lead_retry_interval_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        validation_alias="LEAD_RETRY_INTERVAL_SECONDS",
+    )
 
-        self.lead_retry_interval_seconds: int = int(
-            self._get("LEAD_RETRY_INTERVAL_SECONDS", default="30")
-        )
+    max_workers: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        validation_alias="MAX_WORKERS",
+    )
 
-        self.max_workers: int = int(
-            self._get("MAX_WORKERS", default="3")
-        )
+    port: int = Field(
+        default=8000,
+        ge=1024,
+        le=65535,
+        validation_alias="PORT",
+    )
 
-        self.port: int = int(self._get("PORT", default="8000"))
+    screenshots_dir: str = "./screenshots"
 
-        self.screenshots_dir: str = "./screenshots"
-
-        logger.info("✅ Configuración cargada correctamente desde .env")
-
-    def _get(self, key: str, default: str = None) -> str:
-        """
-        Lee una variable de entorno. Si no existe y no tiene valor por defecto,
-        lanza un error claro indicando qué variable falta.
-        Equivalente a @Value con validación en Spring Boot.
-        """
-        value = os.getenv(key, default)
-
-        if value is None:
-            logger.error(f"❌ Variable de entorno faltante: {key}")
-            logger.error(f"   Agrégala al archivo .env: {key}=tu_valor_aqui")
-            raise ValueError(f"Variable de entorno requerida no encontrada: {key}")
-
-        return value
+    @field_validator("google_credentials_path", "google_oauth_client_secret_path", "google_oauth_token_path")
+    @classmethod
+    def resolve_relative_paths(cls, v: str) -> str:
+        return str(Path(v).resolve()) if v.startswith(".") else v
 
 
 settings = Settings()

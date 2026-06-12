@@ -1,7 +1,8 @@
 """Configuracion especifica por pais.
 
-Cada Country define URL de InConcert, datos ficticios locales, formato telefonico y equivalencias de nivel academico.
-Esto evita repartir condicionales por pais dentro de los servicios de automatizacion.
+Cada Country define URL de InConcert y datos ficticios locales.
+Los generadores de datos aleatorios (nombres, telefonos) viven en core/fake_data/.
+Esto sigue SRP: Country solo almacena configuracion, no contiene logica de generacion.
 """
 
 from dataclasses import dataclass, field

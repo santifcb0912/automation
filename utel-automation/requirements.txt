@@ -1,5 +1,6 @@
 # Servidor web y API REST
-fastapi
+fastapi==0.136.3
+starlette==1.2.1
 
 # Servidor que corre FastAPI
 uvicorn

@@ -116,12 +116,6 @@ class MockLocator:
     async def bounding_box(self) -> Optional[dict]:
         return {"x": 0, "y": 0, "width": 100, "height": 30}
 
-    async def element_handle(self) -> Any:
-        return MagicMock()
-
-    async def input_value(self, **kwargs) -> str:
-        return ""
-
     async def evaluate(self, expression: str, arg: Any = None) -> Any:
         if self._evaluate_result is not None:
             return self._evaluate_result

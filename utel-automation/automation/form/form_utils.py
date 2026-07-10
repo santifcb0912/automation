@@ -5,7 +5,7 @@ Pure functions — no Playwright dependency. Testable standalone.
 
 import unicodedata
 from typing import Optional
-from config.countries import Country, infer_level_from_url, get_level_name
+from config.countries import Country, get_level_name
 
 
 LEVEL_ALIASES = {
@@ -14,8 +14,10 @@ LEVEL_ALIASES = {
     "Maestria": ["Maestria", "Maestrias", "Maestría", "Maestrías", "Master", "Máster"],
     "Maestrias ejecutivas": ["Maestrias ejecutivas", "Maestrías ejecutivas", "Maestria ejecutiva", "Maestría ejecutiva"],
     "Licenciaturas hibridas": ["Licenciaturas hibridas", "Licenciaturas híbridas", "Licenciatura hibrida", "Licenciatura híbrida", "Modalidad Hibrida", "Modalidad Híbrida"],
+    "Maestrias hibridas": ["Maestrias hibridas", "Maestrías híbridas", "Maestrias Híbridas", "Maestría Hibrida", "Maestría Híbrida"],
     "Bootcamps": ["Bootcamps", "Bootcamp"],
     "Bachillerato": ["Bachillerato"],
+    "Diplomados": ["Diplomados", "Diplomado"],
     "Doble titulacion Mex-USA": ["Doble titulacion Mex-USA", "Doble titulación Mex-USA", "Doble titulacion", "Doble titulación", "Mex-USA"],
 }
 
@@ -35,6 +37,8 @@ PROGRAM_SEARCH_BY_LEVEL = {
     "bootcamp": "Bootcamp",
     "bootcamps": "Bootcamp",
     "bachillerato": "Bachillerato",
+    "diplomados": "Diplomado",
+    "maestrias hibridas": "Maestria hibrida",
     "doble titulacion mex usa": "Doble titulacion",
     "doble titulacion mexusa": "Doble titulacion",
 }
@@ -102,7 +106,7 @@ def is_mexico_universidad_lp(country: Country, url: str) -> bool:
 
 
 def resolve_level(country: Country, lead_nivel: str, landing_url: str) -> str:
-    raw_level = lead_nivel or infer_level_from_url(landing_url) or ""
+    raw_level = lead_nivel or ""
     return canonical_level(get_level_name(country, raw_level) or raw_level)
 
 

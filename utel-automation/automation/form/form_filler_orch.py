@@ -293,9 +293,11 @@ class FormFillerOrchestrator:
             await self._fill_program_input(level)
         await self.page.wait_for_timeout(1200)
 
-        await contacts.set_name(self._fake_data.get_name(self.country.id, self.country.fake_name))
+        await contacts.set_name(self._fake_data.get_name())
+
         await contacts.set_email(test_email)
-        await contacts.set_phone(self._fake_data.get_phone(self.country.id, self.country.fake_phone))
+
+        await contacts.set_phone(self._fake_data.get_phone(self.country.id))
         await privacy.check()
 
         state = await self.detector.read_form_state()
@@ -331,9 +333,9 @@ class FormFillerOrchestrator:
 
         await handler.fill_cms_sequence(level=level, raw_level=raw_level)
         await self.page.wait_for_timeout(800)
+        name = self._fake_data.get_name()
 
-        name = self._fake_data.get_name(self.country.id, self.country.fake_name)
-        phone = self._fake_data.get_phone(self.country.id, self.country.fake_phone)
+        phone = self._fake_data.get_phone(self.country.id)
 
         await handler.fill_universidad_inputs(test_email, name, phone)
         await self.page.wait_for_timeout(800)

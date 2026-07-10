@@ -16,7 +16,7 @@ from config.settings import settings
 from events.queue import EventQueue
 from sheets.reader import SheetsReader
 from sheets.writer import SheetsWriter
-from automation.screenshot import ScreenshotManager
+from automation.inconcert.screenshot import ScreenshotManager
 from web.routes import router
 
 
@@ -34,6 +34,20 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("UTEL Automation cerrando...")
+
+    orch = getattr(app.state, "orchestrator", None)
+    if orch:
+        logger.info("Cancelando proceso activo...")
+        orch.cancel()
+
+    thread = getattr(app.state, "orchestrator_thread", None)
+    if thread and thread.is_alive():
+        logger.info("Esperando a que el hilo de proceso termine...")
+        thread.join(timeout=15)
+        if thread.is_alive():
+            logger.warning("Hilo de proceso no termino a tiempo — forzando cierre")
+        else:
+            logger.info("Hilo de proceso terminado correctamente")
 
 
 def create_app() -> FastAPI:

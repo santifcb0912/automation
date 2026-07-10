@@ -20,13 +20,12 @@ from fastapi.templating import Jinja2Templates
 from loguru import logger
 
 from config.settings import settings
-from config.models import RunRequest
+from core.models import RunRequest
 from sheets.reader import SheetsReader
 from sheets.writer import SheetsWriter
-from automation.screenshot import ScreenshotManager
+from automation.inconcert.screenshot import ScreenshotManager
 from core.interfaces.i_event_publisher import IEventPublisher
-from orchestrator import Orchestrator
-from web.validators import RunRequestValidator
+from pipeline.orchestrator import Orchestrator
 from web.sse_handler import stream_response
 
 router = APIRouter()
@@ -68,6 +67,7 @@ def normalize_country_selection(country: str, mexico_flow: str = "") -> tuple[st
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse(
+        request,
         "index.html",
         {"request": request, "countries": COUNTRY_OPTIONS, "title": "UTEL Lead Tester"},
     )
@@ -91,13 +91,22 @@ async def run_test(
 
     event_queue.reset()
 
+    if not sheet_id:
+        return JSONResponse({"status": "error", "message": "Debe especificar el ID de Google Sheets"}, status_code=400)
+
+    if not sheet_tab:
+        return JSONResponse({"status": "error", "message": "Debe seleccionar una hoja concreta"}, status_code=400)
+
+    if not country:
+        return JSONResponse({"status": "error", "message": "Debe seleccionar un país"}, status_code=400)
+
     selected_country, selected_mexico_flow = normalize_country_selection(country, mexico_flow)
 
     run_request = RunRequest(
         country=selected_country,
         mexico_flow=selected_mexico_flow,
-        sheet_id=sheet_id if sheet_id else None,
-        sheet_tab=sheet_tab if sheet_tab else None,
+        sheet_id=sheet_id,
+        sheet_tab=sheet_tab,
     )
 
     orch = Orchestrator(
@@ -122,6 +131,7 @@ async def run_test(
             loop.close()
 
     thread = threading.Thread(target=run_in_new_loop, daemon=True)
+    request.app.state.orchestrator_thread = thread
     thread.start()
 
     return JSONResponse({
@@ -135,6 +145,9 @@ async def run_test(
 @router.get("/api/stream")
 async def stream_events(request: Request):
     event_queue: IEventPublisher = request.app.state.event_queue
+    if event_queue.is_finished:
+        logger.info("SSE rechazado — proceso ya terminado")
+        return JSONResponse({"status": "finished"}, status_code=410)
     logger.info("Cliente SSE conectado")
     return stream_response(request, event_queue)
 

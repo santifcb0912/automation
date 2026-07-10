@@ -2,7 +2,6 @@
 
 from playwright.async_api import Page
 from loguru import logger
-from automation.common.script_loader import ScriptLoader
 
 
 CONTACT_FORM_DETECTION_JS = """

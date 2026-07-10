@@ -13,10 +13,6 @@
 
 
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-
-
-    <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
-
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -74,13 +70,14 @@
                     <div class="form-group">
                         <label class="form-label" for="sheet_id">
                             ID de Google Sheets
-                            <span class="label-hint">(opcional — usa el del .env si se omite)</span>
+                            <span class="label-hint">(obligatorio)</span>
                         </label>
                         <input
                             class="form-input"
                             type="text"
                             id="sheet_id"
                             name="sheet_id"
+                            required
                             placeholder="Pega aquí el ID del Sheets del mes actual"
                         >
                     </div>
@@ -89,14 +86,15 @@
                     <div class="form-group">
                         <label class="form-label" for="sheet_tab">
                             Hoja
-                            <span class="label-hint">(opcional — detecta automáticamente)</span>
+                            <span class="label-hint">(obligatorio)</span>
                         </label>
                         <input
                             class="form-input"
                             type="text"
                             id="sheet_tab"
                             name="sheet_tab"
-                            placeholder="Ej: 27-30"
+                            required
+                            placeholder="Ej: 27-30, JUAN"
                         >
                     </div>
 
@@ -143,10 +141,6 @@
         <div
             class="results-grid"
             id="results-container"
-            hx-ext="sse"
-            sse-connect="/api/stream"
-            sse-swap="message"
-            hx-on:sse:message="handleSSEMessage(event)"
         >
 
 
@@ -208,15 +202,68 @@
 
 
     <script>
+        let eventSource = null;
         let successCount = 0;
         let errorCount = 0;
         let totalLeads = 0;
         let processedLeads = 0;
 
-        /**
-         * Se llama cuando el servidor confirma que el proceso inició.
-         * Actualiza la UI para mostrar que está corriendo.
-         */
+        function connectSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            eventSource = new EventSource('/api/stream');
+            eventSource.onmessage = function(e) {
+                try {
+                    const parsed = JSON.parse(e.data);
+                    const type = parsed.type;
+                    const data = parsed.data;
+
+                    switch(type) {
+                        case 'leads_loaded':
+                            totalLeads = data.total;
+                            document.getElementById('progress-label').textContent =
+                                `${data.country} — Hoja ${data.tab}`;
+                            document.getElementById('progress-count').textContent =
+                                `0 / ${totalLeads}`;
+                            break;
+                        case 'processing':
+                            document.getElementById('processing-now').style.display = 'flex';
+                            document.getElementById('processing-text').textContent =
+                                `Procesando: ${data.email} (${data.index}/${data.total})`;
+                            break;
+                        case 'success':
+                            addSuccessItem(data);
+                            successCount++;
+                            processedLeads++;
+                            updateProgress();
+                            break;
+                        case 'lead_error':
+                            addErrorItem(data);
+                            errorCount++;
+                            processedLeads++;
+                            updateProgress();
+                            break;
+                        case 'done':
+                            showSummary(data);
+                            onProcessFinished();
+                            break;
+                        case 'error':
+                            showCriticalError(data.message);
+                            onProcessFinished();
+                            break;
+                        case 'heartbeat':
+                        case 'stream_end':
+                            break;
+                    }
+                } catch(e) {}
+            };
+            eventSource.onerror = function() {
+                eventSource.close();
+                eventSource = null;
+            };
+        }
+
         function onRunStarted(event) {
             document.querySelector('.status-dot').className = 'status-dot running';
             document.querySelector('.status-text').textContent = 'Procesando...';
@@ -239,76 +286,14 @@
                 '<div class="empty-state"><span>Sin errores por ahora</span></div>';
 
             document.getElementById('summary-panel').style.display = 'none';
+
+            connectSSE();
         }
 
-        /**
-         * Maneja los eventos SSE que llegan del servidor.
-         * Cada tipo de evento actualiza una parte diferente de la UI.
-         */
-        function handleSSEMessage(event) {
-            try {
-                const parsed = JSON.parse(event.detail.data);
-                const type = parsed.type;
-                const data = parsed.data;
-
-                switch(type) {
-
-                    case 'leads_loaded':
-                        totalLeads = data.total;
-                        document.getElementById('progress-label').textContent =
-                            `${data.country} — Hoja ${data.tab}`;
-                        document.getElementById('progress-count').textContent =
-                            `0 / ${totalLeads}`;
-                        break;
-
-                    case 'processing':
-                        document.getElementById('processing-now').style.display = 'flex';
-                        document.getElementById('processing-text').textContent =
-                            `Procesando: ${data.email} (${data.index}/${data.total})`;
-                        break;
-
-                    case 'success':
-                        addSuccessItem(data);
-                        successCount++;
-                        processedLeads++;
-                        updateProgress();
-                        break;
-
-                    case 'lead_error':
-                        addErrorItem(data);
-                        errorCount++;
-                        processedLeads++;
-                        updateProgress();
-                        break;
-
-                    case 'done':
-                        showSummary(data);
-                        onProcessFinished();
-                        break;
-
-                    case 'error':
-                        showCriticalError(data.message);
-                        onProcessFinished();
-                        break;
-
-                    case 'heartbeat':
-                    case 'stream_end':
-                        break;
-                }
-
-            } catch(e) {
-            }
-        }
-
-        /**
-         * Agrega un lead exitoso a la columna verde.
-         */
         function addSuccessItem(data) {
             const list = document.getElementById('success-list');
-
             const emptyState = list.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
-
             const item = document.createElement('div');
             item.className = 'result-item success-item';
             item.innerHTML = `
@@ -321,21 +306,14 @@
                     Ver captura →
                 </a>
             `;
-
             list.insertBefore(item, list.firstChild);
-
             document.getElementById('success-count').textContent = successCount + 1;
         }
 
-        /**
-         * Agrega un lead con error a la columna roja.
-         */
         function addErrorItem(data) {
             const list = document.getElementById('error-list');
-
             const emptyState = list.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
-
             const item = document.createElement('div');
             item.className = 'result-item error-item';
             item.innerHTML = `
@@ -346,27 +324,18 @@
                 </div>
                 <div class="result-url">${data.url.substring(0, 60)}...</div>
             `;
-
             list.insertBefore(item, list.firstChild);
-
             document.getElementById('error-count').textContent = errorCount + 1;
         }
 
-        /**
-         * Actualiza la barra de progreso.
-         */
         function updateProgress() {
             if (totalLeads === 0) return;
-
             const percentage = Math.round((processedLeads / totalLeads) * 100);
             document.getElementById('progress-bar').style.width = `${percentage}%`;
             document.getElementById('progress-count').textContent =
                 `${processedLeads} / ${totalLeads}`;
         }
 
-        /**
-         * Muestra el panel de resumen final.
-         */
         function showSummary(data) {
             document.getElementById('stat-total').textContent = data.total || 0;
             document.getElementById('stat-success').textContent = data.successful || 0;
@@ -376,28 +345,25 @@
             document.getElementById('processing-now').style.display = 'none';
         }
 
-        /**
-         * Restaura la UI al estado inicial cuando el proceso termina.
-         */
         function onProcessFinished() {
             document.querySelector('.status-dot').className = 'status-dot idle';
             document.querySelector('.status-text').textContent = 'Proceso completado';
             document.getElementById('btn-start').disabled = false;
             document.getElementById('btn-stop').disabled = true;
             document.getElementById('progress-bar').style.width = '100%';
+
+            if (eventSource) {
+                eventSource.onerror = null;
+                eventSource.close();
+                eventSource = null;
+            }
         }
 
-        /**
-         * Muestra un error crítico en la UI.
-         */
         function showCriticalError(message) {
             document.getElementById('progress-label').textContent = `Error: ${message}`;
             document.getElementById('progress-label').style.color = '#ff4444';
         }
 
-        /**
-         * Llama al endpoint /api/stop para cancelar el proceso.
-         */
         async function stopProcess() {
             const response = await fetch('/api/stop', { method: 'POST' });
             const data = await response.json();
@@ -405,6 +371,8 @@
             document.getElementById('btn-start').disabled = false;
             document.getElementById('btn-stop').disabled = true;
         }
+
+        connectSSE();
     </script>
 
 </body>

@@ -1,43 +1,45 @@
 """Repositorio de lectura para Google Sheets.
-
-Mapa mental si vienes de Spring Boot: similar a un repository con metodos tipo findLeadsByCountry.
-Abre el spreadsheet configurado, detecta la pestana semanal cuando aplica, normaliza tipos de formulario y retorna LeadRow.
 """
 
+from enum import IntEnum
+
 import gspread
-from google.oauth2.service_account import Credentials
 from datetime import datetime
 from typing import List, Optional
 from loguru import logger
-
 from config.settings import settings
-from config.models import LeadRow, FormType
 from config.google_auth import get_google_credentials
+from core.models import LeadRow
+
+
+class Column(IntEnum):
+    COUNTRY = 1
+    NIVEL = 2
+    URL = 3
+    LOCATION = 4
+    CLIENTE = 5
 
 
 class SheetsReader:
-    """
-    Lee el Google Sheets y retorna los leads a procesar.
-    Equivalente a un @Repository en Spring Boot.
-    Se conecta a Google una sola vez y reutiliza la conexión.
-    """
 
+    FORM_TYPE_MAP = {
+        "footer": "Footer",
+        "lateral": "Lateral",
+        "tarjeta": "Tarjeta",
+        "formlp": "FormLP",
+        "form": "FormLP",
+    }
+
+    # Prepara el cliente de Google Sheets. La conexión se abre al instanciar.
     def __init__(self):
         self._client: Optional[gspread.Client] = None
-
         self._connect()
 
+    # Establece la conexión con Google Sheets usando la Service Account.
     def _connect(self) -> None:
-        """
-        Establece la conexión con Google Sheets usando la Service Account.
-        Equivalente a configurar el DataSource en Spring Boot.
-        Solo se ejecuta una vez al inicio.
-        """
         try:
             logger.info("🔗 Conectando con Google Sheets...")
-
             credentials = get_google_credentials()
-
             self._client = gspread.authorize(credentials)
             logger.info("✅ Conexión con Google Sheets establecida")
 
@@ -50,164 +52,55 @@ class SheetsReader:
             logger.error(f"❌ Error conectando con Google: {e}")
             raise
 
-    def detect_current_tab(self, spreadsheet: gspread.Spreadsheet) -> str:
-        """
-        Detecta automáticamente qué hoja del Sheets usar según la fecha actual.
-        Cada hoja representa una semana laboral (ej: "27-30", "06-10").
-
-        Lógica:
-        - Obtenemos el día de hoy
-        - Buscamos la hoja cuyo rango de días incluya el día de hoy
-        - Si no encontramos coincidencia exacta, usamos la primera hoja disponible
-        """
-        today_day = datetime.now().day
-
-        logger.info(f"📅 Día actual: {today_day} — buscando hoja correspondiente")
-
-        sheet_names = [ws.title for ws in spreadsheet.worksheets()]
-        logger.info(f"📋 Hojas disponibles: {sheet_names}")
-
-        for sheet_name in sheet_names:
-            if sheet_name.lower() == "val":
-                continue
-
-            try:
-                parts = sheet_name.split("-")
-                if len(parts) != 2:
-                    continue
-
-                start_day = int(parts[0])
-
-                end_str = parts[1]
-                end_day = int(end_str)
-
-                if start_day <= today_day <= end_day:
-                    logger.info(f"✅ Hoja detectada automáticamente: {sheet_name}")
-                    return sheet_name
-
-                if start_day > end_day:
-                    if today_day >= start_day or today_day <= end_day:
-                        logger.info(f"✅ Hoja detectada (cruza mes): {sheet_name}")
-                        return sheet_name
-
-            except (ValueError, IndexError):
-                continue
-
-        lead_sheets = [s for s in sheet_names if s.lower() != "val"]
-        if lead_sheets:
-            fallback = lead_sheets[-1]
-            logger.warning(f"⚠️  No se detectó hoja para hoy — usando última disponible: {fallback}")
-            return fallback
-
-        raise ValueError("No se encontraron hojas de leads en el Sheets")
-
+    # Lee el Sheets y retorna los leads del país indicado para la hoja especificada.
     def get_leads(
         self,
         country_name: str,
-        sheet_id: Optional[str] = None,
-        sheet_tab: Optional[str] = None,
-        mexico_flow: Optional[str] = None
+        sheet_id: str,
+        sheet_tab: str,
     ) -> tuple[List[LeadRow], str]:
-        """
-        Lee el Sheets y retorna la lista de leads del país solicitado.
-        Equivalente a un método findByCountry() en un @Repository de Spring.
-
-        Parámetros:
-            country_name: nombre del país como aparece en columna B
-            sheet_id: ID del Sheets (opcional — si no se pasa usa el del .env)
-            sheet_tab: nombre de la hoja (opcional — si no se pasa lo detecta)
-
-        Retorna:
-            tuple de (lista de LeadRow, nombre de la hoja usada)
-        """
-        spreadsheet_id = sheet_id or settings.google_sheet_id
+        logger.info(f"📖 Abriendo Sheets ID: {sheet_id}")
+        logger.info(f"📋 Leyendo hoja: {sheet_tab} | País: {country_name}")
 
         try:
-            logger.info(f"📖 Abriendo Sheets ID: {spreadsheet_id}")
-
-            spreadsheet = self._client.open_by_key(spreadsheet_id)
-
-            tab_name = sheet_tab or self.detect_current_tab(spreadsheet)
-
-            logger.info(f"📋 Leyendo hoja: {tab_name} | País: {country_name}")
-
-            worksheet = spreadsheet.worksheet(tab_name)
-
+            spreadsheet = self._client.open_by_key(sheet_id)
+            worksheet = spreadsheet.worksheet(sheet_tab)
             all_rows = worksheet.get_all_values()
-
-            leads = []
-            for row_idx, row in enumerate(all_rows[1:], start=2):
-                if len(row) < 5:
-                    continue
-
-                country_col = row[1].strip() if row[1] else ""
-                nivel_col   = row[2].strip() if row[2] else None
-                url_col     = row[3].strip() if row[3] else ""
-                location_col = row[4].strip() if row[4] else ""
-                cliente_col  = row[5].strip() if len(row) > 5 and row[5] else ""
-
-                if not url_col:
-                    continue
-
-                clean_url = url_col.split()[0] if url_col else ""
-                url_lower = clean_url.lower()
-                flow = (mexico_flow or "").strip().lower()
-                if flow == "universidad" or "niversidad" in flow:
-                    flow = "universidad"
-                is_mexico = country_name.strip().lower() in ["mexico", "méxico", "mã©xico"]
-                is_universidad_mexico_row = (
-                    is_mexico
-                    and flow == "universidad"
-                    and url_lower.startswith("https://universidad.utel.edu.mx")
-                )
-                is_cms_mexico_row = (
-                    is_mexico
-                    and flow == "cms"
-                    and url_lower.startswith("https://utel.edu.mx")
-                )
-
-                if (
-                    country_name.lower() not in country_col.lower()
-                    and country_col.lower() not in country_name.lower()
-                    and not is_universidad_mexico_row
-                    and not is_cms_mexico_row
-                ):
-                    continue
-
-                form_type_raw = location_col.strip()
-                form_type_key = form_type_raw.lower().replace(" ", "").replace("-", "").replace("_", "")
-                form_type_map = {
-                    "footer": "Footer",
-                    "lateral": "Lateral",
-                    "tarjeta": "Tarjeta",
-                    "targeta": "Tarjeta",
-                    "formlp": "FormLP",
-                    "form": "FormLP",
-                }
-                form_type = form_type_map.get(form_type_key, form_type_raw)
-
-                lead = LeadRow(
-                    row_number=row_idx,
-                    country_name=country_col,
-                    nivel=nivel_col,
-                    landing_url=clean_url,
-                    form_type=form_type,
-                    cliente=cliente_col,
-                )
-
-                leads.append(lead)
-
-            logger.info(f"✅ {len(leads)} leads encontrados para {country_name} en hoja {tab_name}")
-            return leads, tab_name
-
         except gspread.exceptions.SpreadsheetNotFound:
-            logger.error(f"❌ Sheets no encontrado con ID: {spreadsheet_id}")
-            logger.error("   Verifica que el GOOGLE_SHEET_ID en .env sea correcto")
+            logger.error(f"❌ Sheets no encontrado con ID: {sheet_id}")
             raise
 
-        except Exception as e:
-            logger.error(f"❌ Error leyendo Sheets: {e}")
-            raise
+        leads = []
+        for row_idx, row in enumerate(all_rows[1:], start=2):
+            if len(row) < 5:
+                continue
+
+            country_val = row[Column.COUNTRY].strip() if row[Column.COUNTRY] else ""
+            if not country_val or country_name.lower() not in country_val.lower():
+                continue
+
+            url = row[Column.URL].strip() if row[Column.URL] else ""
+            if not url:
+                continue
+
+            leads.append(LeadRow(
+                row_number=row_idx,
+                country_name=country_val,
+                nivel=row[Column.NIVEL].strip() if row[Column.NIVEL] else None,
+                landing_url=url.split()[0],
+                form_type=self._normalize_form_type(row[Column.LOCATION].strip() if row[Column.LOCATION] else ""),
+                cliente=row[Column.CLIENTE].strip() if len(row) > Column.CLIENTE and row[Column.CLIENTE] else "",
+            ))
+
+        logger.info(f"✅ {len(leads)} leads para {country_name} en hoja {sheet_tab}")
+        return leads, sheet_tab
+
+    # Normaliza el valor de tipo de formulario usando un mapa de sinónimos.
+    @staticmethod
+    def _normalize_form_type(raw: str) -> str:
+        key = raw.lower().replace(" ", "").replace("-", "").replace("_", "")
+        return SheetsReader.FORM_TYPE_MAP.get(key, raw)
+        
 
     def get_column_for_today(self) -> str:
         """

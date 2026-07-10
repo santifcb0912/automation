@@ -8,12 +8,12 @@
 .env
 
 # Credenciales de Google — contiene clave privada RSA
-config/google_credentials.json
-config/google_oauth_client_secret.json
-config/google_oauth_token.json
+config/data/google_credentials.json
+config/data/google_oauth_client_secret.json
+config/data/google_oauth_token.json
 
-# Capturas de pantalla temporales
-screenshots/
+# Perfil persistente de Chrome
+chrome_profile/
 
 # Archivos de log
 logs/

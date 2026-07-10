@@ -5,7 +5,7 @@ from typing import Optional
 from playwright.async_api import Page, Locator
 from loguru import logger
 
-from config.countries import Country, infer_level_from_url, get_level_name
+from config.countries import Country, get_level_name
 from automation.form.form_utils import FORM_IDS, canonical_level, get_form_id
 
 
@@ -19,7 +19,7 @@ class FormDetector:
         self.form_type: str = ""
 
     def resolve_level(self, lead_nivel: str, landing_url: str) -> str:
-        raw_level = lead_nivel or infer_level_from_url(landing_url) or ""
+        raw_level = lead_nivel or ""
         level_name = get_level_name(self.country, raw_level) or raw_level
         return canonical_level(level_name)
 

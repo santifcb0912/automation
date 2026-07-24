@@ -34,6 +34,7 @@ class BrowserManager:
             user_data_dir="./chrome_profile",
             channel="chrome",
             headless=False,
+            no_viewport=True,
 
             args=[
                 "--no-sandbox",

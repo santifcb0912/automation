@@ -482,6 +482,12 @@ body {
     text-decoration: underline;
 }
 
+.result-warning {
+    font-size: 11px;
+    color: var(--accent-yellow);
+    margin-top: 2px;
+}
+
 .result-reason {
     font-size: 11px;
     color: var(--accent-red);

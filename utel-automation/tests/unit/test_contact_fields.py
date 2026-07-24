@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 pytestmark = pytest.mark.asyncio
 
-from automation.form.contact_fields import ContactFieldFiller
+from automation.form.handlers.contact_fields import ContactFieldFiller
 from tests.mocks.mock_page import MockPage
 
 

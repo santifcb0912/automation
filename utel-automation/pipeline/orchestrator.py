@@ -170,9 +170,9 @@ class Orchestrator:
             form_page = await browser_manager.new_page()
             form_filler = FormFillerOrchestrator(page=form_page, country=country, fake_data_service=self._fake_data)
 
-            form_submitted = await form_filler.fill(lead)
-            if not form_submitted:
-                await self._handle_error(lead, sheet_id, tab_name, column, "formulario no enviado")
+            fill_error = await form_filler.fill(lead)
+            if fill_error is not None:
+                await self._handle_error(lead, sheet_id, tab_name, column, fill_error)
                 return False
 
             inconcert_page = await browser_manager.new_page()
@@ -200,17 +200,31 @@ class Orchestrator:
                 await self._handle_error(lead, sheet_id, tab_name, column, "error subiendo captura a Drive")
                 return False
 
-            await asyncio.to_thread(
-                self.sheets_writer.write_success,
-                sheet_id=sheet_id, tab_name=tab_name, row_number=lead.row_number,
-                column=column, screenshot_link=screenshot_link, test_email=lead.test_email,
-            )
-
-            await self._emit("success", {
-                "email": lead.test_email, "url": lead.landing_url, "row": lead.row_number,
-                "link": screenshot_link, "index": idx + 1, "total": total,
-                "country": lead.country_name, "nivel": lead.nivel or "",
-            })
+            if inconcert.missing_contact_area:
+                warning = "Captura tomada sin campo area de programa de interes en contacto - inconcert"
+                logger.warning(warning)
+                await asyncio.to_thread(
+                    self.sheets_writer.write_success,
+                    sheet_id=sheet_id, tab_name=tab_name, row_number=lead.row_number,
+                    column=column, screenshot_link=screenshot_link, test_email=lead.test_email,
+                )
+                await self._emit("partial_success", {
+                    "email": lead.test_email, "url": lead.landing_url, "row": lead.row_number,
+                    "link": screenshot_link, "index": idx + 1, "total": total,
+                    "country": lead.country_name, "nivel": lead.nivel or "",
+                    "warning": warning,
+                })
+            else:
+                await asyncio.to_thread(
+                    self.sheets_writer.write_success,
+                    sheet_id=sheet_id, tab_name=tab_name, row_number=lead.row_number,
+                    column=column, screenshot_link=screenshot_link, test_email=lead.test_email,
+                )
+                await self._emit("success", {
+                    "email": lead.test_email, "url": lead.landing_url, "row": lead.row_number,
+                    "link": screenshot_link, "index": idx + 1, "total": total,
+                    "country": lead.country_name, "nivel": lead.nivel or "",
+                })
 
             logger.success(f"Lead procesado exitosamente: {lead.test_email}")
             return True

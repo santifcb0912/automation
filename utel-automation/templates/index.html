@@ -233,6 +233,7 @@
                                 `Procesando: ${data.email} (${data.index}/${data.total})`;
                             break;
                         case 'success':
+                        case 'partial_success':
                             addSuccessItem(data);
                             successCount++;
                             processedLeads++;
@@ -302,6 +303,7 @@
                     <span class="result-nivel">${data.nivel || ''}</span>
                     <span class="result-row">Fila ${data.row}</span>
                 </div>
+                ${data.warning ? `<div class="result-warning">${data.warning}</div>` : ''}
                 <a class="result-link" href="${data.link}" target="_blank">
                     Ver captura →
                 </a>

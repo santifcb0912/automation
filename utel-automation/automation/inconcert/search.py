@@ -161,10 +161,10 @@ class InConcertSearch:
         try:
             await human_delay(800, 1200)
             menu = self.page.locator("[role='menu']")
-            item = menu.locator("a.dropdown-item[title='Gestionar']")
-            await item.wait_for(state="visible", timeout=5000)
+            item = menu.locator("a.dropdown-item[title='Gestionar']").first
+            await item.wait_for(state="attached", timeout=10000)
             async with self.page.expect_navigation(timeout=15000):
-                await item.click(timeout=4000)
+                await item.dispatch_event("click")
             logger.info("Click en 'Gestionar'")
             return True
         except Exception as e:

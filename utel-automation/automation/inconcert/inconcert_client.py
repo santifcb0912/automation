@@ -15,7 +15,7 @@ from core.utils import human_delay
 
  
 class InConcertClient:
-  
+   
     #Constructor
     def __init__(self, page: Page, country: Country):
         self.page = page
@@ -23,6 +23,7 @@ class InConcertClient:
         self.auth = InConcertAuth(page)
         self.search = InConcertSearch(page, self._build_contacts_url())
         self._last_email: Optional[str] = None
+        self._missing_contact_area: bool = False
 
 
     # dirige la URL completa de la página de contactos, eliminando /home si existe y concatena /contact/people"
@@ -55,28 +56,41 @@ class InConcertClient:
     #Abre el detalle del lead en InConcert: click en 3 puntos → Gestionar → espera panel → 
     #expande secciones Creacion y Contacto para la captura
     #Retorna None si todo sale bien, o un str con la razon del error para escribir en Sheets
+    _LEAD_NOT_ARRIVED = "Lead no llego durante los 120s"
+
     async def prepare_screenshot_view(self) -> Optional[str]:
         if not self._last_email:
             return "No hay email para abrir detalle"
 
         if not await self.search.open_actions_menu(self._last_email):
-            return "No se pudo abrir menu de 3 puntos"
+            return self._LEAD_NOT_ARRIVED
 
         if not await self.search.click_gestionar():
-            return "No se encontro opcion 'Gestionar'"
+            return self._LEAD_NOT_ARRIVED
 
         try:
             await self.page.get_by_text(
                 "Gestionar Contacto", exact=True
             ).first.wait_for(state="visible", timeout=10000)
             logger.info("Panel de gestion abierto")
-        except Exception as e:
-            return f"Panel de gestion no se abrio — {e}"
+        except Exception:
+            return self._LEAD_NOT_ARRIVED
 
         await self.page.wait_for_timeout(10000)
         logger.info("Espera de 10s completada — paneles deberian estar listos")
-        for expandir in [self.search.expand_creation_section, self.search.expand_contact_section]:
-            err = await expandir()
-            if err:
-                return err
+
+        err = await self.search.expand_creation_section()
+        if err:
+            return self._LEAD_NOT_ARRIVED
+
+        err = await self.search.expand_contact_section()
+        if err:
+            self._missing_contact_area = True
+            msg = "Captura tomada sin campo area de programa de interes en contacto - inconcert"
+            logger.warning(msg)
+
         return None
+
+    @property
+    def missing_contact_area(self) -> bool:
+        return self._missing_contact_area

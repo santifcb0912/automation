@@ -91,6 +91,7 @@ class MockLocator:
         self._selector = selector
         self.first = self
         self._evaluate_result: Any = None
+        self._filled_value: str = ""
 
     def mock_evaluate(self, return_value: Any):
         self._evaluate_result = return_value
@@ -107,8 +108,12 @@ class MockLocator:
     async def click(self, **kwargs):
         pass
 
+    async def dispatch_event(self, action: str):
+        if action == "click":
+            self._page._checkbox_checked = True
+
     async def fill(self, value: str, **kwargs):
-        pass
+        self._filled_value = value
 
     async def scroll_into_view_if_needed(self, **kwargs):
         pass
@@ -119,13 +124,15 @@ class MockLocator:
     async def evaluate(self, expression: str, arg: Any = None) -> Any:
         if self._evaluate_result is not None:
             return self._evaluate_result
+        if "querySelector" in expression and "checkbox" in expression:
+            return self._page._checkbox_checked
         # First try exact match, then truncated prefix match
         if expression in self._page._evaluate_results:
             return self._page._evaluate_results[expression]
         return self._page._evaluate_results.get(expression[:80], None)
 
     async def input_value(self, **kwargs) -> str:
-        return ""
+        return getattr(self, '_filled_value', '')
 
     async def inner_text(self, **kwargs) -> str:
         return ""

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 pytestmark = pytest.mark.asyncio
 
-from automation.form.select_handler import SelectHandler
+from automation.form.handlers.select_handler import SelectHandler
 from tests.mocks.mock_page import MockPage
 
 

@@ -1,28 +1,28 @@
 """FormDetector — detección de tipo, scope y estado de formularios."""
 
+import json
 from typing import Optional
 
 from playwright.async_api import Page, Locator
 from loguru import logger
 
-from config.countries import Country, get_level_name
-from automation.form.form_utils import canonical_level, get_form_id
+from config.countries import Country
+from config.form_configs import FORM_STATE_SELECTORS
+from automation.form.engine.form_utils import get_form_id
 
 
 class FormDetector:
     """Detecta y analiza formularios en landing pages."""
 
-    def __init__(self, page: Page, country: Country):
+    # Page + pais + scope opcional (se asigna luego si es None)
+    def __init__(self, page: Page, country: Country, form_scope: Optional[Locator] = None):
         self.page = page
         self.country = country
-        self.form_scope: Optional[Locator] = None
+        self.form_scope = form_scope
         self.form_type: str = ""
 
-    def resolve_level(self, lead_nivel: str, landing_url: str) -> str:
-        raw_level = lead_nivel or ""
-        level_name = get_level_name(self.country, raw_level) or raw_level
-        return canonical_level(level_name)
 
+    # Localiza el contenedor del formulario por form_type. Retorna el scope o None.
     async def detect_form_scope(self, form_type: str, tarjeta_product_opened: bool = False) -> Optional[Locator]:
         self.form_type = form_type
 
@@ -46,28 +46,34 @@ class FormDetector:
 
         return None
 
+
+    # Lee valores actuales de campos: modalidad, area, programa, nombre, email, telefono + checkbox
     async def read_form_state(self) -> dict:
         try:
-            return await (self.form_scope or self.page.locator("body")).evaluate("""
-                (root) => {
-                    const pick = (sel) => root.querySelector(sel)?.value?.trim() || '';
-                    const checkbox = root.querySelector("input[type='checkbox']");
-                    return {
-                        modality: pick("select[name='modality'], select#modality"),
-                        area: pick("select[name='area'], select#area"),
-                        program: pick("select[name='program'], select#program, input[name='program'], input#program"),
-                        first_name: pick("#first_name, input[name='first_name'], input[name='name'], input[name*='nombre' i], input[id*='nombre' i]"),
-                        email: pick("#email, input[name='email'], input[type='email'], input[name*='correo' i], input[id*='correo' i]"),
-                        phone: pick("#phone, input[name='phone'], input[type='tel'], input[name*='telefono' i], input[id*='telefono' i], input[name*='celular' i], input[id*='celular' i], input[name*='mobile' i]"),
-                        has_checkbox: Boolean(checkbox),
-                        checkbox_checked: checkbox ? checkbox.checked : true,
-                    };
-                }
+            selectors_json = json.dumps(FORM_STATE_SELECTORS)
+            return await (self.form_scope or self.page.locator("body")).evaluate(f"""
+                (root) => {{
+                    const sel = {selectors_json};
+                    const pick = (s) => root.querySelector(s)?.value?.trim() || '';
+                    const cb = root.querySelector("input[type='checkbox']");
+                    return {{
+                        modality: pick(sel.modality),
+                        area: pick(sel.area),
+                        program: pick(sel.program),
+                        first_name: pick(sel.first_name),
+                        email: pick(sel.email),
+                        phone: pick(sel.phone),
+                        has_checkbox: Boolean(cb),
+                        checkbox_checked: cb ? cb.checked : true
+                    }};
+                }}
             """)
         except Exception as e:
             logger.debug(f"No se pudo leer estado del formulario: {e}")
             return {}
+            
 
+ # Loguea todos los input/select/textarea del scope para debugging
     async def log_fields(self, moment: str) -> None:
         try:
             fields = await (self.form_scope or self.page.locator("body")).evaluate("""

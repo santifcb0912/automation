@@ -2,7 +2,7 @@
 
 from typing import Optional, Protocol
 
-from automation.form.fill_context import FillContext
+from automation.form.contracts.fill_context import FillContext
 
 
 class IFormFiller(Protocol):

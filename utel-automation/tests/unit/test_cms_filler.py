@@ -3,6 +3,7 @@
 Validan que fill() llama los metodos correctos en el orden correcto
 y que retorna Optional[str] segun el resultado de cada paso.
 Usa mocks para SelectHandler, ContactFieldFiller, PrivacyHandler, FormSubmitter y FormDetector.
+Los mocks se inyectan por constructor en vez de usar patch.object.
 """
 
 import pytest
@@ -10,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from config.countries import Country
 from config.form_configs import CmsConfig
-from automation.form.fill_context import FillContext
+from automation.form.contracts.fill_context import FillContext
 from automation.form.fillers.mexico_cms_filler import MexicoCmsFiller
 
 
@@ -47,16 +48,20 @@ def _make_ctx(tag: str = "SELECT") -> FillContext:
     )
 
 
-def _make_filler() -> MexicoCmsFiller:
+def _make_filler(select_handler=None, contact_filler=None, privacy_handler=None,
+                 submitter=None, detector=None, validator=None) -> MexicoCmsFiller:
     page = AsyncMock()
     page.wait_for_timeout = AsyncMock()
-    return MexicoCmsFiller(_make_config(), page, _make_country(), MagicMock())
+    return MexicoCmsFiller(
+        _make_config(), page, _make_country(), MagicMock(),
+        select_handler=select_handler, contact_filler=contact_filler,
+        privacy_handler=privacy_handler, submitter=submitter,
+        detector=detector, validator=validator,
+    )
 
 
 @pytest.mark.asyncio
 async def test_fill_returns_none_on_success():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.select = AsyncMock(return_value=True)
     mock_sel.exists = AsyncMock(return_value=True)
@@ -84,31 +89,26 @@ async def test_fill_returns_none_on_success():
         "checkbox_checked": True,
     })
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact), \
-         patch.object(mod, "PrivacyHandler", return_value=mock_privacy), \
-         patch.object(mod, "FormSubmitter", return_value=mock_submitter), \
-         patch.object(mod, "FormDetector", return_value=mock_detector):
-
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(
+        select_handler=mock_sel, contact_filler=mock_contact,
+        privacy_handler=mock_privacy, submitter=mock_submitter,
+        detector=mock_detector,
+    )
+    result = await filler.fill(_make_ctx())
 
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_fill_returns_error_when_area_fails():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
-    mock_sel.select = AsyncMock(return_value=False)
+    async def _select_side(field_name, **kw):
+        return field_name != "area"
+    mock_sel.select = AsyncMock(side_effect=_select_side)
     mock_sel.exists = AsyncMock(return_value=True)
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(select_handler=mock_sel)
+    result = await filler.fill(_make_ctx())
 
     assert result is not None
     assert "Area" in result or "area" in result.lower()
@@ -116,18 +116,14 @@ async def test_fill_returns_error_when_area_fails():
 
 @pytest.mark.asyncio
 async def test_fill_returns_error_when_program_fails():
-    filler = _make_filler()
-
     side_effects = {"modality": True, "area": True, "program": False}
 
     mock_sel = AsyncMock()
     mock_sel.exists = AsyncMock(return_value=True)
     mock_sel.select = AsyncMock(side_effect=lambda field, **kw: side_effects.get(field, True))
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(select_handler=mock_sel)
+    result = await filler.fill(_make_ctx())
 
     assert result is not None
     assert "Programa" in result or "programa" in result.lower()
@@ -135,8 +131,6 @@ async def test_fill_returns_error_when_program_fails():
 
 @pytest.mark.asyncio
 async def test_fill_returns_error_when_name_fails():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.select = AsyncMock(return_value=True)
     mock_sel.exists = AsyncMock(return_value=True)
@@ -146,11 +140,8 @@ async def test_fill_returns_error_when_name_fails():
     mock_contact.set_email = AsyncMock(return_value=True)
     mock_contact.set_phone = AsyncMock(return_value=True)
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(select_handler=mock_sel, contact_filler=mock_contact)
+    result = await filler.fill(_make_ctx())
 
     assert result is not None
     assert "nombre" in result.lower()
@@ -158,8 +149,6 @@ async def test_fill_returns_error_when_name_fails():
 
 @pytest.mark.asyncio
 async def test_fill_returns_error_when_email_fails():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.select = AsyncMock(return_value=True)
     mock_sel.exists = AsyncMock(return_value=True)
@@ -169,11 +158,8 @@ async def test_fill_returns_error_when_email_fails():
     mock_contact.set_email = AsyncMock(return_value=False)
     mock_contact.set_phone = AsyncMock(return_value=True)
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(select_handler=mock_sel, contact_filler=mock_contact)
+    result = await filler.fill(_make_ctx())
 
     assert result is not None
     assert "email" in result.lower()
@@ -181,8 +167,6 @@ async def test_fill_returns_error_when_email_fails():
 
 @pytest.mark.asyncio
 async def test_fill_returns_error_when_phone_fails():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.select = AsyncMock(return_value=True)
     mock_sel.exists = AsyncMock(return_value=True)
@@ -192,11 +176,8 @@ async def test_fill_returns_error_when_phone_fails():
     mock_contact.set_email = AsyncMock(return_value=True)
     mock_contact.set_phone = AsyncMock(return_value=False)
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(select_handler=mock_sel, contact_filler=mock_contact)
+    result = await filler.fill(_make_ctx())
 
     assert result is not None
     assert "telefono" in result.lower()
@@ -204,8 +185,6 @@ async def test_fill_returns_error_when_phone_fails():
 
 @pytest.mark.asyncio
 async def test_fill_returns_error_when_privacy_fails():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.select = AsyncMock(return_value=True)
     mock_sel.exists = AsyncMock(return_value=True)
@@ -218,12 +197,9 @@ async def test_fill_returns_error_when_privacy_fails():
     mock_privacy = AsyncMock()
     mock_privacy.check = AsyncMock(return_value=False)
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact), \
-         patch.object(mod, "PrivacyHandler", return_value=mock_privacy):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(select_handler=mock_sel, contact_filler=mock_contact,
+                          privacy_handler=mock_privacy)
+    result = await filler.fill(_make_ctx())
 
     assert result is not None
     assert "privacidad" in result.lower()
@@ -231,8 +207,6 @@ async def test_fill_returns_error_when_privacy_fails():
 
 @pytest.mark.asyncio
 async def test_fill_returns_error_when_submit_fails():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.select = AsyncMock(return_value=True)
     mock_sel.exists = AsyncMock(return_value=True)
@@ -260,14 +234,12 @@ async def test_fill_returns_error_when_submit_fails():
         "checkbox_checked": True,
     })
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact), \
-         patch.object(mod, "PrivacyHandler", return_value=mock_privacy), \
-         patch.object(mod, "FormSubmitter", return_value=mock_submitter), \
-         patch.object(mod, "FormDetector", return_value=mock_detector):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(
+        select_handler=mock_sel, contact_filler=mock_contact,
+        privacy_handler=mock_privacy, submitter=mock_submitter,
+        detector=mock_detector,
+    )
+    result = await filler.fill(_make_ctx())
 
     assert result is not None
     assert "submit" in result.lower()
@@ -275,8 +247,6 @@ async def test_fill_returns_error_when_submit_fails():
 
 @pytest.mark.asyncio
 async def test_fill_skips_area_when_not_exists():
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.select = AsyncMock(return_value=True)
     mock_sel.exists = AsyncMock(return_value=False)
@@ -304,14 +274,12 @@ async def test_fill_skips_area_when_not_exists():
         "checkbox_checked": True,
     })
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact), \
-         patch.object(mod, "PrivacyHandler", return_value=mock_privacy), \
-         patch.object(mod, "FormSubmitter", return_value=mock_submitter), \
-         patch.object(mod, "FormDetector", return_value=mock_detector):
-        result = await filler.fill(_make_ctx())
+    filler = _make_filler(
+        select_handler=mock_sel, contact_filler=mock_contact,
+        privacy_handler=mock_privacy, submitter=mock_submitter,
+        detector=mock_detector,
+    )
+    result = await filler.fill(_make_ctx())
 
     assert result is None
 
@@ -319,8 +287,6 @@ async def test_fill_skips_area_when_not_exists():
 @pytest.mark.asyncio
 async def test_fill_program_input_detection():
     """Cuando <input name='program'> existe, se llena como input sin pasar por select."""
-    filler = _make_filler()
-
     mock_sel = AsyncMock()
     mock_sel.exists = AsyncMock(return_value=True)
 
@@ -353,18 +319,17 @@ async def test_fill_program_input_detection():
         "checkbox_checked": True,
     })
 
-    import automation.form.fillers.mexico_cms_filler as mod
-
     mock_searcher = AsyncMock()
     mock_searcher.select_random_program = AsyncMock(return_value=True)
 
+    filler = _make_filler(
+        select_handler=mock_sel, contact_filler=mock_contact,
+        privacy_handler=mock_privacy, submitter=mock_submitter,
+        detector=mock_detector,
+    )
     ctx = _make_ctx(tag="INPUT")
-    with patch.object(mod, "SelectHandler", return_value=mock_sel), \
-         patch.object(mod, "ContactFieldFiller", return_value=mock_contact), \
-         patch.object(mod, "PrivacyHandler", return_value=mock_privacy), \
-         patch.object(mod, "FormSubmitter", return_value=mock_submitter), \
-         patch.object(mod, "FormDetector", return_value=mock_detector), \
-         patch.object(mod, "ProgramSearchEngine", return_value=mock_searcher):
+    import automation.form.fillers.mexico_cms_filler as mod
+    with patch.object(mod, "ProgramSearchEngine", return_value=mock_searcher):
         result = await filler.fill(ctx)
 
     assert result is None

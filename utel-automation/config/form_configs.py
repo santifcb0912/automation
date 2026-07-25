@@ -44,6 +44,17 @@ MEXICO_CMS_CONFIG = CmsConfig(
 
 # Registry de configs CMS por pais_id.
 # Para agregar un pais nuevo: agregar entrada aqui y crear su CmsConfig.
+# Selectores para inspeccion de estado del formulario (read_form_state).
+# Cada entrada es un string CSS compativle con querySelector (comma-separated).
+FORM_STATE_SELECTORS: dict[str, str] = {
+    "modality": "select[name='modality'], select#modality",
+    "area": "select[name='area'], select#area",
+    "program": "select[name='program'], select#program, input[name='program'], input#program",
+    "first_name": "#first_name, input[name='first_name'], input[name='name'], input[name*='nombre' i], input[id*='nombre' i]",
+    "email": "#email, input[name='email'], input[type='email'], input[name*='correo' i], input[id*='correo' i]",
+    "phone": "#phone, input[name='phone'], input[type='tel'], input[name*='telefono' i], input[id*='telefono' i], input[name*='celular' i], input[id*='celular' i], input[name*='mobile' i]",
+}
+
 CMS_CONFIGS: dict[str, CmsConfig] = {
     "mexico": MEXICO_CMS_CONFIG,
 }

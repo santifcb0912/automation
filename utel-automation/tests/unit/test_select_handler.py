@@ -48,15 +48,3 @@ class TestSelect:
         assert await handler.select("nonexistent", preferred=["x"]) is False
 
 
-class TestSelectByContext:
-    async def test_success_returns_true(self, handler, mock_page):
-        from unittest.mock import patch
-        from tests.mocks.mock_page import MockLocator
-        with patch.object(MockLocator, 'evaluate', return_value={"name": "program", "text": "Licenciatura", "score": 18}):
-            assert await handler.select_by_context("program", ["Licenciatura"], "Licenciatura") is True
-
-    async def test_no_match_returns_false(self, handler, mock_page):
-        from unittest.mock import patch
-        from tests.mocks.mock_page import MockLocator
-        with patch.object(MockLocator, 'evaluate', return_value=None):
-            assert await handler.select_by_context("program", ["Nope"], "Nope") is False

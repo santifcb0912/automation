@@ -9,8 +9,8 @@ from playwright.async_api import Page
 
 from config.countries import Country
 from config.form_configs import CMS_CONFIGS
-from automation.form.form_utils import is_mexico_utel_lp, is_mexico_universidad_lp
-from automation.form.i_form_filler import IFormFiller
+from automation.form.engine.form_utils import is_mexico_utel_lp, is_mexico_universidad_lp
+from automation.form.contracts.i_form_filler import IFormFiller
 from automation.form.fillers.mexico_cms_filler import MexicoCmsFiller
 from automation.form.fillers.fallback_filler import FallbackFiller
 
@@ -21,6 +21,7 @@ def get_filler(
     page: Page,
     fake_data,
 ) -> IFormFiller:
+
     # Universidad Mexico tiene flujo propio (Choices.js) — aun no migrado a strategy
     if is_mexico_universidad_lp(country, landing_url):
         return FallbackFiller(f"Universidad Mexico no implementado como strategy: {country.id}/{landing_url}")

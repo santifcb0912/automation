@@ -47,10 +47,10 @@ FORM_IDS = {
     "footer": "FooterBLC",
     "lateral": "LateralBLC",
     "tarjeta": "TarjetaBLC",
-    "targeta": "TarjetaBLC",
 }
 
 
+# Normaliza texto: lowercase, sin acentos, solo alfanumerico y espacios
 def normalize_text(value: str) -> str:
     text = str(value or "").strip().lower()
     text = unicodedata.normalize("NFD", text)
@@ -58,6 +58,7 @@ def normalize_text(value: str) -> str:
     return "".join(ch for ch in text if ch.isalnum() or ch.isspace()).strip()
 
 
+# Normaliza nivel academico a su forma canonica (Maestria, Licenciatura, etc.)
 def canonical_level(level: str) -> str:
     raw = (level or "").strip()
     normalized = normalize_text(raw)
@@ -67,6 +68,7 @@ def canonical_level(level: str) -> str:
     return raw
 
 
+# Retorna lista de variantes del nivel academico ordenadas por preferencia para el <select>
 def level_preferences(level: str) -> list[str]:
     canonical = canonical_level(level)
     preferences = [level, canonical]
@@ -74,6 +76,7 @@ def level_preferences(level: str) -> list[str]:
     return list(dict.fromkeys([item for item in preferences if item]))
 
 
+# Retorna lista de variantes de modalidad ordenadas por preferencia segun el nivel
 def modality_preferences(level: str) -> list[str]:
     normalized = normalize_text(level)
     if "hibrid" in normalized:
@@ -83,11 +86,13 @@ def modality_preferences(level: str) -> list[str]:
     return ["En linea", "En línea", "Online"]
 
 
+# Convierte nivel academico a termino de busqueda de programa
 def program_query(level: str) -> str:
     key = normalize_text(level)
     return PROGRAM_SEARCH_BY_LEVEL.get(key, level or "Licenciatura")
 
 
+# Normaliza el tipo de formulario (tarjeta, lateral, footer, formlp)
 def normalize_form_type(form_type: str) -> str:
     raw = normalize_text(form_type).replace(" ", "")
     if raw in ["formlp", "form"]:
@@ -97,18 +102,22 @@ def normalize_form_type(form_type: str) -> str:
     return raw
 
 
+# True si es landing page de utel.edu.mx
 def is_mexico_utel_lp(country: Country, url: str) -> bool:
     return country.id == "mexico" and (url or "").strip().lower().startswith("https://utel.edu")
 
 
+# True si es landing page de universidad.utel.edu.mx
 def is_mexico_universidad_lp(country: Country, url: str) -> bool:
     return country.id == "mexico" and (url or "").strip().lower().startswith("https://universidad.utel.edu.mx")
 
 
-def resolve_level(country: Country, lead_nivel: str, landing_url: str) -> str:
+# Traduce lead.nivel a nivel canonico segun el pais
+def resolve_level(country: Country, lead_nivel: str) -> str:
     raw_level = lead_nivel or ""
     return canonical_level(get_level_name(country, raw_level) or raw_level)
 
 
+# Retorna el id del contenedor del formulario segun su tipo
 def get_form_id(form_type: str) -> Optional[str]:
     return FORM_IDS.get(form_type)

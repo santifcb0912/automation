@@ -6,12 +6,13 @@ from loguru import logger
 
 
 class ContactFieldFiller:
-    """Llena campos de contacto en formularios."""
+    """Encarcado de poner los datos en los campos de contacto en formularios."""
 
     def __init__(self, page: Page, form_scope: Locator):
         self.page = page
         self.form_scope = form_scope
 
+    # Busca el primer campo que exista en el DOM y lo llena con el valor dado
     async def set_input(self, selectors: list[str], value: str, label: str) -> bool:
         field = await self._first_existing(selectors)
         if not field:
@@ -31,6 +32,7 @@ class ContactFieldFiller:
         logger.warning(f"No se pudo completar '{label}'")
         return False
 
+    # Llena el campo nombre con un nombre ficticio
     async def set_name(self, fake_name: str) -> bool:
         return await self.set_input(
             ["#first_name", "input[name='first_name']", "input[name='name']", "input[name*='nombre' i]", "input[id*='nombre' i]"],
@@ -38,6 +40,7 @@ class ContactFieldFiller:
             "nombre",
         )
 
+    # Llena el campo email con el email de prueba del lead
     async def set_email(self, test_email: str) -> bool:
         return await self.set_input(
             ["#email", "input[name='email']", "input[type='email']", "input[name*='correo' i]", "input[id*='correo' i]"],
@@ -45,6 +48,7 @@ class ContactFieldFiller:
             "email",
         )
 
+    # Llena el campo telefono con un telefono ficticio
     async def set_phone(self, fake_phone: str) -> bool:
         return await self.set_input(
             [
@@ -57,6 +61,7 @@ class ContactFieldFiller:
             "telefono",
         )
 
+    # Retorna el primer locator del DOM que coincida con algun selector de la lista, o None
     async def _first_existing(self, selectors: list[str]) -> Optional[Locator]:
         for selector in selectors:
             locator = self.form_scope.locator(selector)

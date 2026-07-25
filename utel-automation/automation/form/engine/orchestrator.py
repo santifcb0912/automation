@@ -20,15 +20,16 @@ from loguru import logger
 from config.countries import Country
 from core.fake_data.service import FakeDataService
 from core.models import LeadRow
-from automation.form.detectors import FormDetector
-from automation.form.form_utils import (
+from automation.form.engine.detectors import FormDetector
+from automation.form.engine.form_utils import (
     normalize_form_type,
     is_mexico_utel_lp,
+    resolve_level,
 )
-from automation.form.program_search import ProgramSearchEngine
+from automation.form.engine.program_search import ProgramSearchEngine
 from automation.common.scroll_navigator import scroll_to_form_id
-from automation.form.fill_context import FillContext
-from automation.form.registry import get_filler
+from automation.form.contracts.fill_context import FillContext
+from automation.form.engine.registry import get_filler
 
 
 # Timeouts y pausas de estabilizacion en milisegundos para cada
@@ -102,7 +103,7 @@ class FormFillerOrchestrator:
     def _prepare_fill_state(self, lead: LeadRow) -> str:
         self._form_type = normalize_form_type(lead.form_type)
         self._mexico_utel = is_mexico_utel_lp(self.country, lead.landing_url)
-        level = self._detector.resolve_level(lead.nivel, lead.landing_url)
+        level = resolve_level(self.country, lead.nivel)
         logger.info(f"Abriendo LP: {lead.landing_url}")
         logger.info(f"Formulario: {self._form_type or 'desconocido'} | nivel='{level}'")
         if self._mexico_utel:

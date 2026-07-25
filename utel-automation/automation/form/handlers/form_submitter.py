@@ -6,27 +6,13 @@ from playwright.async_api import Locator, Page
 from loguru import logger
 
 
-SUBMIT_BUTTONS = [
-    "button[type='submit']",
-    "input[type='submit']",
-    "button:has-text('Calcula tu beca')",
-    "button:has-text('Enviar información')",
-    "button:has-text('Enviar informacion')",
-    "button:has-text('Continua por Whatsapp')",
-    "button:has-text('Continúa por Whatsapp')",
-    "button:has-text('Solicitar información')",
-    "button:has-text('Solicitar informacion')",
-    "button:has-text('Enviar')",
-]
-
-
 class FormSubmitter:
     """Busca el botón submit y envía el formulario."""
 
-    def __init__(self, page: Page, form_scope: Locator, submit_buttons: list[str] = None):
+    def __init__(self, page: Page, form_scope: Locator, submit_buttons: list[str]):
         self.page = page
         self.form_scope = form_scope
-        self._submit_buttons = submit_buttons if submit_buttons is not None else SUBMIT_BUTTONS
+        self._submit_buttons = submit_buttons
 
     async def submit(self) -> bool:
         for selector in self._submit_buttons:

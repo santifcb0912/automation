@@ -1,11 +1,11 @@
-"""Tests for pure utility functions in automation.form.form_utils."""
+"""Tests for pure utility functions in automation.form.engine.form_utils."""
 
 import pytest
 from dataclasses import dataclass, field
 from typing import Dict
 from typing import Optional, Dict, List
 
-from automation.form.form_utils import (
+from automation.form.engine.form_utils import (
     normalize_text,
     canonical_level,
     level_preferences,
@@ -151,17 +151,17 @@ class TestMexicoDetection:
 class TestResolveLevel:
     def test_uses_level_name_from_country(self):
         c = _FakeCountry(id="peru")
-        level = resolve_level(c, "Licenciatura", "")
+        level = resolve_level(c, "Licenciatura")
         assert level == "Licenciatura"
 
-    def test_infers_from_url_when_no_lead_level(self):
+    def test_empty_level_returns_empty(self):
         c = _FakeCountry(id="mexico")
-        level = resolve_level(c, "", "https://utel.edu.mx/maestrias-online")
-        assert level == "Maestria"
+        level = resolve_level(c, "")
+        assert level == ""
 
     def test_fallback_to_raw_level(self):
         c = _FakeCountry(id="mexico")
-        level = resolve_level(c, "Curso raro", "")
+        level = resolve_level(c, "Curso raro")
         assert level == "Curso raro"
 
 

@@ -4,6 +4,36 @@ from typing import Optional
 from playwright.async_api import Locator, Page
 from loguru import logger
 
+_SELECT_JS_FN = """(el, payload) => {
+    const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
+    const clean = s => String(s || '').trim();
+    const bad = new Set(['', '-', '--', 'seleccionar', 'selecciona', 'select', 'choose']);
+    const options = Array.from(el.options || [])
+        .map((opt, i) => ({ index: i, text: clean(opt.textContent), value: clean(opt.value), disabled: opt.disabled }))
+        .filter(opt => {
+            const t = norm(opt.text), v = norm(opt.value);
+            return !opt.disabled && !bad.has(t) && !bad.has(v) && !t.endsWith(':') && opt.index > 0;
+        });
+    if (!options.length) return null;
+    let chosen = null;
+    for (const raw of payload.preferred || []) {
+        const wanted = norm(raw);
+        if (!wanted) continue;
+        let found = options.find(o => norm(o.text) === wanted || norm(o.value) === wanted);
+        if (found) { chosen = { ...found, matched: true }; break; }
+        found = options.find(o => norm(o.text).includes(wanted) || norm(o.value).includes(wanted) || wanted.includes(norm(o.text)));
+        if (found) { chosen = { ...found, matched: true }; break; }
+    }
+    if (payload.requirePreferredMatch && !chosen?.matched) return null;
+    chosen = chosen || options[0];
+    el.selectedIndex = chosen.index;
+    el.value = chosen.value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+    return { ...chosen, matched: chosen?.matched || false };
+}"""
+
 
 class SelectHandler:
     """Maneja la interacción con elementos <select> en formularios."""
@@ -12,12 +42,14 @@ class SelectHandler:
         self.page = page
         self.form_scope = form_scope
 
+    # Verifica si un <select> existe en el formulario por su name/id
     async def exists(self, field_name: str) -> bool:
         select = self.form_scope.locator(
             f"select[name='{field_name}'], select#{field_name}, select[id*='{field_name}' i]"
         )
         return await select.count() > 0
 
+    # Selecciona una opcion en un <select> por nombre del campo; retorna True/False
     async def select(
         self,
         field_name: str,
@@ -34,57 +66,7 @@ class SelectHandler:
         locator = select.first
         await self._wait_for_real_options(locator, field_name)
         chosen = await locator.evaluate(
-            """
-            (select, payload) => {
-                const { preferred, requirePreferredMatch } = payload;
-                const bad = new Set(['', '-', '--', 'seleccionar', 'selecciona', 'select', 'choose']);
-                const clean = (s) => String(s || '').trim();
-                const norm = (s) => clean(s).toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
-                const options = Array.from(select.options || [])
-                    .map((option, index) => ({
-                        index,
-                        text: clean(option.textContent),
-                        value: clean(option.value),
-                        disabled: option.disabled
-                    }))
-                    .filter((option) => {
-                        const t = norm(option.text);
-                        const v = norm(option.value);
-                        return !option.disabled && !bad.has(t) && !bad.has(v)
-                            && !t.endsWith(':') && option.index > 0;
-                    });
-
-                if (!options.length) return null;
-
-                let chosen = null;
-                let matched = false;
-                for (const wantedRaw of preferred || []) {
-                    const wanted = norm(wantedRaw);
-                    if (!wanted) continue;
-                    chosen = options.find((option) => {
-                        const text = norm(option.text);
-                        const value = norm(option.value);
-                        return text === wanted || value === wanted;
-                    });
-                    if (chosen) { matched = true; break; }
-                    chosen = options.find((option) => {
-                        const text = norm(option.text);
-                        const value = norm(option.value);
-                        return text.includes(wanted) || value.includes(wanted) || wanted.includes(text);
-                    });
-                    if (chosen) { matched = true; break; }
-                }
-
-                if (requirePreferredMatch && !matched) return null;
-                chosen = chosen || options[0];
-                select.selectedIndex = chosen.index;
-                select.value = chosen.value;
-                select.dispatchEvent(new Event('input', { bubbles: true }));
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-                select.dispatchEvent(new Event('blur', { bubbles: true }));
-                return { ...chosen, matched };
-            }
-            """,
+            _SELECT_JS_FN,
             {"preferred": preferred, "requirePreferredMatch": require_preferred_match},
         )
 
@@ -95,90 +77,13 @@ class SelectHandler:
         logger.warning(f"Select '{field_name}' sin opcion compatible con {preferred}")
         return False
 
-    async def select_by_context(
-        self,
-        field_name: str,
-        level_preferences: list[str],
-        level: str,
-    ) -> bool:
-        """Busca un select por contexto (score) que matchee el nivel."""
-        try:
-            result = await self.form_scope.evaluate(
-                """
-                (root, payload) => {
-                    const { preferred } = payload;
-                    const clean = (v) => String(v || '').trim();
-                    const norm = (v) => clean(v).toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
-                    const visible = (el) => {
-                        const s = window.getComputedStyle(el);
-                        const r = el.getBoundingClientRect();
-                        return s.display !== 'none' && s.visibility !== 'hidden'
-                            && r.width > 0 && r.height > 0 && !el.disabled;
-                    };
-                    const bad = new Set(['', '-', '--', 'seleccionar', 'selecciona', 'select', 'choose']);
-                    const labelText = (el) => {
-                        const id = el.id ? root.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent || '' : '';
-                        const parent = el.closest('label')?.textContent || '';
-                        return `${id} ${parent}`;
-                    };
-                    const optionsFor = (sel) => Array.from(sel.options || [])
-                        .map((o, i) => ({ index: i, text: clean(o.textContent), value: clean(o.value), disabled: o.disabled }))
-                        .filter((o) => { const t = norm(o.text); const v = norm(o.value); return o.index > 0 && !o.disabled && !bad.has(t) && !bad.has(v); });
-                    const pick = (sel) => {
-                        const opts = optionsFor(sel);
-                        if (!opts.length) return null;
-                        for (const w of preferred || []) {
-                            const want = norm(w);
-                            if (!want) continue;
-                            const exact = opts.find(o => norm(o.text) === want || norm(o.value) === want);
-                            if (exact) return { ...exact, matched: true };
-                            const partial = opts.find(o => { const t = norm(o.text); const v = norm(o.value); return t.includes(want) || v.includes(want) || want.includes(t); });
-                            if (partial) return { ...partial, matched: true };
-                        }
-                        return null;
-                    };
-                    const candidates = Array.from(root.querySelectorAll('select')).filter(visible)
-                        .map((sel) => {
-                            const opts = optionsFor(sel);
-                            const key = norm(`${sel.name || ''} ${sel.id || ''} ${sel.getAttribute('aria-label') || ''} ${labelText(sel)} ${opts.map(o => o.text).join(' ')}`);
-                            const picked = pick(sel);
-                            let score = 0;
-                            if (/program|programa|carrera|interes/.test(key)) score += 8;
-                            if (/licenciatura|maestria|doctorado|bachillerato|bootcamp/.test(key)) score += 5;
-                            if (/modalidad|estado|pais|phone|telefono|nombre|correo|email/.test(key)) score -= 6;
-                            if (picked?.matched) score += 10;
-                            return { select: sel, picked, score };
-                        })
-                        .filter(item => item.picked && item.score > 0)
-                        .sort((a, b) => b.score - a.score);
-
-                    const target = candidates[0];
-                    if (!target) return null;
-                    target.select.selectedIndex = target.picked.index;
-                    target.select.value = target.picked.value;
-                    ['input', 'change', 'blur'].forEach(ev => target.select.dispatchEvent(new Event(ev, { bubbles: true })));
-                    return { name: target.select.name || '', id: target.select.id || '', text: target.picked.text, score: target.score };
-                }
-                """,
-                {"preferred": [*level_preferences, field_name]},
-            )
-
-            if result:
-                logger.info(f"Select por contexto '{field_name}': {result}")
-                await self.page.wait_for_timeout(1500)
-                return True
-        except Exception as e:
-            logger.debug(f"Select por contexto fallo para '{field_name}': {e}")
-
-        return False
-
+    # Espera hasta que opciones reales esten disponibles en un <select> dinamico (area)
     async def _wait_for_real_options(self, select: Locator, field_name: str, timeout_ms: int = 10000) -> None:
         try:
             await self.page.wait_for_function(
-                """
-                ([select, fieldName]) => {
+                """([select, fieldName]) => {
+                    const norm = s => String(s || '').trim().toLowerCase();
                     const bad = new Set(['', '-', '--', 'seleccionar', 'selecciona', 'select', 'choose']);
-                    const norm = (s) => String(s || '').trim().toLowerCase();
                     const real = Array.from(select.options || []).filter((option, index) => {
                         const text = norm(option.textContent);
                         const value = norm(option.value);
@@ -186,8 +91,7 @@ class SelectHandler:
                             && !bad.has(value) && !text.endsWith(':');
                     });
                     return fieldName !== 'area' || real.length > 0;
-                }
-                """,
+                }""",
                 [await select.element_handle(), field_name],
                 timeout=timeout_ms,
             )

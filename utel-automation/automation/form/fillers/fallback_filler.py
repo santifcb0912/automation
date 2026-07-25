@@ -6,8 +6,8 @@ en vez de lanzar excepcion o dejar el comportamiento indefinido.
 
 from typing import Optional
 
-from automation.form.fill_context import FillContext
-from automation.form.i_form_filler import IFormFiller
+from automation.form.contracts.fill_context import FillContext
+from automation.form.contracts.i_form_filler import IFormFiller
 
 
 class FallbackFiller(IFormFiller):

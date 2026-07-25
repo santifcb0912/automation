@@ -4,7 +4,7 @@
 # Contienen contraseñas y datos sensibles
 # ============================================================
 
-# Archivo con todas tus contraseñas — NUNCA a git
+# Archivo con todas las contraseñas — NUNCA a git
 .env
 
 # Credenciales de Google — contiene clave privada RSA
@@ -21,7 +21,6 @@ logs/
 # Entorno virtual de Python
 venv/
 env/
-xlr8/
 
 # Archivos compilados de Python — se generan automáticamente
 __pycache__/
@@ -41,3 +40,4 @@ desktop.ini
 
 # Paquetes generados para compartir
 *.zip
+

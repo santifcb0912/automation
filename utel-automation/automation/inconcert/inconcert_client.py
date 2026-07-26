@@ -26,11 +26,13 @@ class InConcertClient:
         self._missing_contact_area: bool = False
 
 
-    # dirige la URL completa de la página de contactos, eliminando /home si existe y concatena /contact/people"
+    # dirige la URL completa de la página de contactos, normalizando /mas y /home si existen
     def _build_contacts_url(self) -> str:
         base = self.country.inconcert_url.rstrip("/")
         if base.endswith("/home"):
             base = base[:-5]
+        if not base.endswith("/mas"):
+            base += "/mas"
         return base + "/contact/people"
 
     #Navega al home de InConcert primero (para establecer cookies/sesion),

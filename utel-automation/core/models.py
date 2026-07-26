@@ -21,4 +21,4 @@ class RunRequest:
     country: str
     sheet_id: Optional[str] = None
     sheet_tab: Optional[str] = None
-    mexico_flow: Optional[str] = None
+    flow: Optional[str] = None

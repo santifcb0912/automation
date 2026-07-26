@@ -16,5 +16,8 @@ class FallbackFiller(IFormFiller):
     def __init__(self, reason: str):
         self._reason = reason
 
+    async def prepare(self, form_type: str, level: str) -> None:
+        pass
+
     async def fill(self, ctx: FillContext) -> Optional[str]:
         return self._reason

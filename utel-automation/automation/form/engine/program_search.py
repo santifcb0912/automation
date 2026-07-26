@@ -33,6 +33,18 @@ class ProgramSearchEngine:
         self.page = page
         self.form_scope = form_scope
 
+    #Hook: cada pais implementa como obtener el input de busqueda
+    async def _locate_search_input(self):
+        return self.page.locator("input[placeholder='Buscar programa']")
+
+    #Hook: cada pais implementa como seleccionar y clickear el resultado
+    async def _select_and_click_result(self, query: str) -> bool:
+        result = self.page.locator(f"a.chakra-link[href*='{query.lower()}']").first
+        if await result.count() == 0:
+            return False
+        await result.click(timeout=5000)
+        return True
+
     #Escribe area en input programa y clickea un programa al azar del dropdown
     async def select_random_program(self, level: str) -> bool:
         query = canonical_level(level)
@@ -70,21 +82,20 @@ class ProgramSearchEngine:
         return False
 
 
-    #Escribe area de interes en input, espera dropdown, clickea un resultado
+    #Template method: escribe query en input, espera dropdown, clickea resultado
     async def search_program_from_generic_page(self, level: str, original_url: str) -> bool:
         query = canonical_level(level)
-        search_input = self.page.locator("input[placeholder='Buscar programa']")
+        search_input = await self._locate_search_input()
         if await search_input.count() == 0:
             logger.warning("Tarjeta: no se encontro input de busqueda")
             return False
         await search_input.first.scroll_into_view_if_needed(timeout=5000)
         await search_input.first.fill(query, timeout=5000)
         await self.page.wait_for_timeout(3000)
-        result = self.page.locator(f"a.chakra-link[href*='{query.lower()}']").first
-        if await result.count() == 0:
+        clicked = await self._select_and_click_result(query)
+        if not clicked:
             logger.info(f"Tarjeta: sin resultados para '{query}'")
             return False
-        await result.click(timeout=5000)
         return await self._wait_for_url_change(original_url)
 
 
@@ -117,3 +128,41 @@ class ProgramSearchEngine:
                 return True
             await self.page.wait_for_timeout(400)
         return False
+
+    #Factory: retorna la subclase segun pais
+    @staticmethod
+    def for_country(country: str, page: Page, form_scope: Locator) -> 'ProgramSearchEngine':
+        if country == "argentina":
+            return ArgentinaProgramSearchEngine(page, form_scope)
+        return ProgramSearchEngine(page, form_scope)
+
+
+#Argentina: clickea lupa si input no esta visible
+class ArgentinaProgramSearchEngine(ProgramSearchEngine):
+
+    #Click lupa si input oculto, luego retorna el input
+    async def _locate_search_input(self):
+        search_input = self.page.locator("input[placeholder='Buscar programa']")
+        if await search_input.count() == 0:
+            logger.info("Argentina: clickeando lupa para revelar input")
+            await self.page.evaluate("""
+                const p = document.querySelector("path[d*='21.07']");
+                const btn = p?.closest("button, [role='button']");
+                if (btn) btn.click();
+            """)
+            await self.page.wait_for_timeout(3000)
+            search_input = self.page.locator("input[placeholder='Buscar programa']")
+        return search_input
+
+    #Elige resultado al azar del dropdown de Sugerencias
+    async def _select_and_click_result(self, query: str) -> bool:
+        dropdown = self.page.locator("ul[role='list']:has(span:has-text('Sugerencias'))")
+        options = dropdown.locator("a.chakra-link")
+        count = await options.count()
+        if count == 0:
+            return False
+        idx = random.randint(0, count - 1)
+        await self.page.evaluate("el => el.click()", await options.nth(idx).element_handle())
+        return True
+
+

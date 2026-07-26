@@ -81,7 +81,7 @@ class Orchestrator:
                 sheet_tab=request.sheet_tab,
             )
 
-            leads = self._filter_mexico_flow(leads, request)
+            leads = self._filter_by_flow(leads, request)
             if not leads:
                 logger.warning(f"No se encontraron leads para {request.country}")
                 await self._emit("done", {"message": f"No se encontraron leads para {request.country}", "total": 0})
@@ -258,17 +258,27 @@ class Orchestrator:
     async def _emit(self, event_type: str, data: dict) -> None:
         await self.event_queue.emit(event_type, data)
 
-    # Filtra los leads de México por URL según el flujo seleccionado (universidad o cms). Para otros países retorna todos.
-    def _filter_mexico_flow(self, leads: list[LeadRow], request: RunRequest) -> list[LeadRow]:
-        if request.country.lower() not in ["mexico", "méxico"]:
-            return leads
-        flow = (request.mexico_flow or "").strip().lower()
+    # Filtra leads por URL según el flujo (cms o universidad) y país.
+    def _filter_by_flow(self, leads: list[LeadRow], request: RunRequest) -> list[LeadRow]:
+        flow = (request.flow or "").strip().lower()
         if not flow:
             return leads
-        if flow == "universidad" in flow:
-            return [l for l in leads if l.landing_url.lower().startswith("https://universidad.utel.edu.mx")]
-        if flow == "cms":
-            return [l for l in leads if l.landing_url.lower().startswith("https://utel.edu.mx")]
+        country = request.country.lower()
+
+        if country == "argentina":
+            if flow == "universidad":
+                return [l for l in leads if l.landing_url.lower().startswith("https://universidad.utel.edu.mx/argentina")]
+            if flow == "cms":
+                return [l for l in leads if l.landing_url.lower().startswith("https://utel.edu.mx/argentina")]
+            return leads
+
+        if country in ["mexico", "méxico"]:
+            if flow == "universidad":
+                return [l for l in leads if l.landing_url.lower().startswith("https://universidad.utel.edu.mx")]
+            if flow == "cms":
+                return [l for l in leads if l.landing_url.lower().startswith("https://utel.edu.mx")]
+            return leads
+
         return leads
 
     # Cancela la ejecución en curso: marca la bandera y cancela todas las tareas asíncronas pendientes.

@@ -1,6 +1,6 @@
 """Configuraciones de formularios CMS por pais.
 
-Cada CmsConfig define los selectores y parametros que MexicoCmsFiller usa para llenar
+Cada CmsConfig define los selectores y parametros que CmsFiller usa para llenar
 formularios CMS de un pais especifico. Cuando un pais nuevo necesita su propia
 configuracion, se agrega una entrada al dict CMS_CONFIGS.
 """
@@ -15,10 +15,14 @@ class CmsConfig:
     # Botones de submit (selectores CSS o pseudo-selectores de Playwright)
     submit_buttons: list[str] = field(default_factory=list)
 
+    # Textos de CTA para abrir panel lateral
+    cta_texts: list[str] = field(default_factory=list)
+
     # Nombres de campos <select> (usados por SelectHandler para construir CSS)
     field_modality: str = "modality"
     field_area: str = "area"
     field_program: str = "program"
+    field_provincia: str = ""
 
 
 # Configuracion CMS para Mexico (utel.edu.mx)
@@ -37,9 +41,31 @@ MEXICO_CMS_CONFIG = CmsConfig(
         "button:has-text('Solicitar informacion')",
         "button:has-text('Enviar')",
     ],
+    cta_texts=["Solicitar información", "Solicitar informacion"],
     field_modality="modality",
     field_area="area",
     field_program="program",
+)
+
+# Configuracion CMS para Argentina (utel.edu.mx/argentina/)
+ARGENTINA_CMS_CONFIG = CmsConfig(
+    submit_buttons=[
+        "button[type='submit']",
+        "input[type='submit']",
+        "button:has-text('Calcula tu beca')",
+        "button:has-text('Enviar información')",
+        "button:has-text('Enviar informacion')",
+        "button:has-text('Continua por Whatsapp')",
+        "button:has-text('Continúa por Whatsapp')",
+        "button:has-text('Solicitar información')",
+        "button:has-text('Solicitar informacion')",
+        "button:has-text('Enviar')",
+    ],
+    cta_texts=["Contáctanos", "Contactanos"],
+    field_modality="modality",
+    field_area="area",
+    field_program="program",
+    field_provincia="provincia",
 )
 
 # Registry de configs CMS por pais_id.
@@ -50,11 +76,12 @@ FORM_STATE_SELECTORS: dict[str, str] = {
     "modality": "select[name='modality'], select#modality",
     "area": "select[name='area'], select#area",
     "program": "select[name='program'], select#program, input[name='program'], input#program",
-    "first_name": "#first_name, input[name='first_name'], input[name='name'], input[name*='nombre' i], input[id*='nombre' i]",
+    "first_name": "#first_name, input[name='first_name'], input[name='firstname'], input[name='name'], input[name*='nombre' i], input[id*='nombre' i]",
     "email": "#email, input[name='email'], input[type='email'], input[name*='correo' i], input[id*='correo' i]",
     "phone": "#phone, input[name='phone'], input[type='tel'], input[name*='telefono' i], input[id*='telefono' i], input[name*='celular' i], input[id*='celular' i], input[name*='mobile' i]",
 }
 
 CMS_CONFIGS: dict[str, CmsConfig] = {
     "mexico": MEXICO_CMS_CONFIG,
+    "argentina": ARGENTINA_CMS_CONFIG,
 }

@@ -38,7 +38,7 @@ COUNTRY_OPTIONS = [
 ]
 
 
-def normalize_mexico_flow(flow: str = "") -> Optional[str]:
+def normalize_flow(flow: str = "") -> Optional[str]:
     selected_flow = (flow or "").strip().lower()
     if not selected_flow:
         return None
@@ -49,16 +49,16 @@ def normalize_mexico_flow(flow: str = "") -> Optional[str]:
     return selected_flow
 
 
-def normalize_country_selection(country: str, mexico_flow: str = "") -> tuple[str, Optional[str]]:
+def normalize_country_selection(country: str, flow: str = "") -> tuple[str, Optional[str]]:
     selected_country = (country or "").strip()
-    selected_flow = normalize_mexico_flow(mexico_flow)
+    selected_flow = normalize_flow(flow)
 
     if "|" in selected_country:
-        base_country, flow = selected_country.split("|", 1)
+        base_country, flow_part = selected_country.split("|", 1)
         selected_country = base_country.strip()
-        selected_flow = normalize_mexico_flow(flow) or selected_flow
+        selected_flow = normalize_flow(flow_part) or selected_flow
 
-    if selected_country.lower() == "mexico" and not selected_flow:
+    if selected_country.lower() in ["mexico", "méxico", "argentina"] and not selected_flow:
         selected_flow = "cms"
 
     return selected_country, selected_flow
@@ -78,7 +78,7 @@ async def run_test(
     request: Request,
     background_tasks: BackgroundTasks,
     country: str = Form(...),
-    mexico_flow: str = Form(""),
+    flow: str = Form(""),
     sheet_id: str = Form(""),
     sheet_tab: str = Form(""),
 ):
@@ -100,11 +100,11 @@ async def run_test(
     if not country:
         return JSONResponse({"status": "error", "message": "Debe seleccionar un país"}, status_code=400)
 
-    selected_country, selected_mexico_flow = normalize_country_selection(country, mexico_flow)
+    selected_country, selected_flow = normalize_country_selection(country, flow)
 
     run_request = RunRequest(
         country=selected_country,
-        mexico_flow=selected_mexico_flow,
+        flow=selected_flow,
         sheet_id=sheet_id,
         sheet_tab=sheet_tab,
     )
@@ -118,7 +118,7 @@ async def run_test(
 
     request.app.state.orchestrator = orch
 
-    logger.info(f"Iniciando proceso para {selected_country} | flujo Mexico: {selected_mexico_flow or 'n/a'}")
+    logger.info(f"Iniciando proceso para {selected_country} | flujo: {selected_flow or 'n/a'}")
 
     def run_in_new_loop():
         loop = asyncio.new_event_loop()
@@ -137,7 +137,7 @@ async def run_test(
     return JSONResponse({
         "status": "started",
         "country": selected_country,
-        "mexico_flow": selected_mexico_flow,
+        "flow": selected_flow,
         "message": f"Proceso iniciado para {selected_country}",
     })
 

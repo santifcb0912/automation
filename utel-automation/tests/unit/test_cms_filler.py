@@ -1,4 +1,4 @@
-"""Tests unitarios para MexicoCmsFiller.
+"""Tests unitarios para CmsFiller.
 
 Validan que fill() llama los metodos correctos en el orden correcto
 y que retorna Optional[str] segun el resultado de cada paso.
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from config.countries import Country
 from config.form_configs import CmsConfig
 from automation.form.contracts.fill_context import FillContext
-from automation.form.fillers.mexico_cms_filler import MexicoCmsFiller
+from automation.form.fillers.cms_filler import CmsFiller
 
 
 def _make_country() -> Country:
@@ -49,10 +49,10 @@ def _make_ctx(tag: str = "SELECT") -> FillContext:
 
 
 def _make_filler(select_handler=None, contact_filler=None, privacy_handler=None,
-                 submitter=None, detector=None, validator=None) -> MexicoCmsFiller:
+                 submitter=None, detector=None, validator=None) -> CmsFiller:
     page = AsyncMock()
     page.wait_for_timeout = AsyncMock()
-    return MexicoCmsFiller(
+    return CmsFiller(
         _make_config(), page, _make_country(), MagicMock(),
         select_handler=select_handler, contact_filler=contact_filler,
         privacy_handler=privacy_handler, submitter=submitter,
@@ -328,7 +328,7 @@ async def test_fill_program_input_detection():
         detector=mock_detector,
     )
     ctx = _make_ctx(tag="INPUT")
-    import automation.form.fillers.mexico_cms_filler as mod
+    import automation.form.fillers.cms_filler as mod
     with patch.object(mod, "ProgramSearchEngine", return_value=mock_searcher):
         result = await filler.fill(ctx)
 

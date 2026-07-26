@@ -35,7 +35,7 @@ class ContactFieldFiller:
     # Llena el campo nombre con un nombre ficticio
     async def set_name(self, fake_name: str) -> bool:
         return await self.set_input(
-            ["#first_name", "input[name='first_name']", "input[name='name']", "input[name*='nombre' i]", "input[id*='nombre' i]"],
+            ["#first_name", "input[name='first_name']", "input[name='firstname']", "input[name='name']", "input[name*='nombre' i]", "input[id*='nombre' i]"],
             fake_name,
             "nombre",
         )

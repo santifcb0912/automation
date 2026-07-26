@@ -58,8 +58,12 @@
                                 <option value="Mexico|universidad">Universidad Mexico</option>
                                 <option value="Mexico|cms">CMS Mexico</option>
                             </optgroup>
+                            <optgroup label="Argentina">
+                                <option value="Argentina|universidad">Universidad Argentina</option>
+                                <option value="Argentina|cms">CMS Argentina</option>
+                            </optgroup>
                             {% for country in countries %}
-                                {% if country != "Mexico" %}
+                                {% if country != "Mexico" and country != "Argentina" %}
                             <option value="{{ country }}">{{ country }}</option>
                                 {% endif %}
                             {% endfor %}

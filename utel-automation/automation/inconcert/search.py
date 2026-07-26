@@ -172,8 +172,8 @@ class InConcertSearch:
             return False
 
 
-   #Busca el titulo de la seccion, hace clic para expandirla y confirma que el contenido aparecio.
-   #Los parametros opcionales ajustan tiempos si una seccion es mas lenta que otra.
+    #Busca el titulo de la seccion, hace clic para expandirla y confirma que el contenido aparecio.
+    #Los parametros opcionales ajustan tiempos si una seccion es mas lenta que otra.
     async def _expand_section(
         self,
         section_text: str,
@@ -193,7 +193,14 @@ class InConcertSearch:
             await human_delay(*delay_after)
 
             verify = self.page.get_by_text(verification_text, exact=True).first
-            await verify.wait_for(state="visible", timeout=20000)
+            try:
+                await verify.wait_for(state="visible", timeout=20000)
+            except TimeoutError:
+                await self.page.wait_for_timeout(2000)
+                _acc = "áéíóúñ"; _unacc = "aeioun"
+                pattern = re.sub(f'[{_acc}]', lambda m, i=_acc.index, u=_unacc: f'[{m.group()}{u[i(m.group())]}]', verification_text)
+                verify = self.page.locator(f"text=/{pattern}/i").first
+                await verify.wait_for(state="visible", timeout=10000)
             await verify.scroll_into_view_if_needed(timeout=3000)
             logger.info(f"Seccion '{section_text}' expandida / {verification_text} visible")
             return None

@@ -1,0 +1,37 @@
+# Servidor web y API REST
+fastapi==0.136.3
+starlette==1.2.1
+
+# Servidor que corre FastAPI
+uvicorn
+
+# Para renderizar el HTML de la interfaz gráfica
+jinja2
+
+# Para manejar las respuestas de formularios HTML
+python-multipart
+
+# Automatización del navegador — el motor del scraping
+playwright
+
+# Librería para leer y escribir en Google Sheets
+gspread
+
+# Librería para autenticarse con Google (Sheets + Drive)
+google-auth
+
+# Flujo OAuth de usuario para Google
+google-auth-oauthlib
+
+# Librería oficial de Google para Drive y Sheets
+google-api-python-client
+
+# Para cargar las variables del archivo .env
+python-dotenv
+
+# Para logs con colores y formato
+loguru
+
+# Validación de settings con tipado fuerte
+pydantic
+pydantic-settings

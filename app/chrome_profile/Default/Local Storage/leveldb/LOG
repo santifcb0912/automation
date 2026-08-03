@@ -1,0 +1,9 @@
+2026/08/03-14:41:36.753 2c30 Reusing MANIFEST C:\Users\SantiagoRiañoRodrigu\Downloads\utel-automation\app\chrome_profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/08/03-14:41:36.769 2c30 Recovering log #271
+2026/08/03-14:41:36.774 2c30 Reusing old log C:\Users\SantiagoRiañoRodrigu\Downloads\utel-automation\app\chrome_profile\Default\Local Storage\leveldb/000271.log 
+2026/08/03-14:44:02.803 5788 Level-0 table #276: started
+2026/08/03-14:44:02.809 5788 Level-0 table #276: 25672 bytes OK
+2026/08/03-14:44:02.811 5788 Delete type=0 #271
+2026/08/03-14:44:19.366 5788 Level-0 table #278: started
+2026/08/03-14:44:19.374 5788 Level-0 table #278: 53987 bytes OK
+2026/08/03-14:44:19.376 5788 Delete type=0 #275
